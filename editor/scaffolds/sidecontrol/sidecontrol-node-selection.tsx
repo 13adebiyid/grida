@@ -204,6 +204,13 @@ export function Selection({
   );
   const cem = useContentEditModeMinimalState();
   const tool = useToolState();
+  const effectiveConfig = useMemo(
+    () => ({
+      ...__default_controls_config,
+      ...config,
+    }),
+    [config]
+  );
 
   const is_vector_edit_mode = cem?.type === "vector";
   const is_scale_tool = tool.type === "scale";
@@ -235,10 +242,16 @@ export function Selection({
               <Header />
               {selection_length === 0 && empty && empty}
               {selection_length === 1 && (
-                <ModeNodeProperties config={config} node_id={selection[0]} />
+                <ModeNodeProperties
+                  config={effectiveConfig}
+                  node_id={selection[0]}
+                />
               )}
               {selection_length > 1 && (
-                <ModeMixedNodeProperties ids={selection} config={config} />
+                <ModeMixedNodeProperties
+                  ids={selection}
+                  config={effectiveConfig}
+                />
               )}
             </>
           )}
