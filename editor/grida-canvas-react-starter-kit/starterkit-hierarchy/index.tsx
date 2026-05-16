@@ -17,8 +17,20 @@ import {
 import { ScenesList } from "./tree-scene";
 import { IsolationNodeHierarchyList } from "./tree-node";
 
-export function ScenesGroup() {
+type SceneGroupLabels = {
+  sceneLabel?: string;
+  newSceneLabel?: string;
+  onCreateScene?: () => void;
+};
+
+export function ScenesGroup({
+  sceneLabel = "Scenes",
+  newSceneLabel = "New Scene",
+  onCreateScene,
+}: SceneGroupLabels = {}) {
   const editor = useCurrentEditor();
+  const createScene =
+    onCreateScene ?? (() => editor.surface.surfaceCreateScene());
 
   return (
     <SidebarGroup
@@ -26,10 +38,10 @@ export function ScenesGroup() {
       className="min-h-16 max-h-56 overflow-y-auto"
     >
       <SidebarGroupLabel>
-        Scenes
-        <SidebarGroupAction onClick={() => editor.surface.surfaceCreateScene()}>
+        {sceneLabel}
+        <SidebarGroupAction onClick={createScene}>
           <PlusIcon />
-          <span className="sr-only">New Scene</span>
+          <span className="sr-only">{newSceneLabel}</span>
         </SidebarGroupAction>
       </SidebarGroupLabel>
       <SidebarGroupContent>
@@ -50,8 +62,14 @@ export function NodeHierarchyGroup() {
   );
 }
 
-export function DocumentHierarchy() {
+export function DocumentHierarchy({
+  sceneLabel = "Scenes",
+  newSceneLabel = "New Scene",
+  onCreateScene,
+}: SceneGroupLabels = {}) {
   const editor = useCurrentEditor();
+  const createScene =
+    onCreateScene ?? (() => editor.surface.surfaceCreateScene());
 
   return (
     <ResizablePanelGroup orientation="vertical" className="h-full min-h-0">
@@ -62,12 +80,10 @@ export function DocumentHierarchy() {
         >
           <div className="p-2">
             <SidebarGroupLabel>
-              Scenes
-              <SidebarGroupAction
-                onClick={() => editor.surface.surfaceCreateScene()}
-              >
+              {sceneLabel}
+              <SidebarGroupAction onClick={createScene}>
                 <PlusIcon />
-                <span className="sr-only">New Scene</span>
+                <span className="sr-only">{newSceneLabel}</span>
               </SidebarGroupAction>
             </SidebarGroupLabel>
           </div>

@@ -9,6 +9,7 @@ import { TransparencyGrid } from "@grida/transparency-grid/react";
 import { useMeasure } from "@uidotdev/usehooks";
 import kolor from "@grida/color";
 import grida from "@grida/schema";
+import cmath from "@grida/cmath";
 
 type CustomComponent = React.ElementType;
 
@@ -103,15 +104,49 @@ export function StandaloneSceneBackground({
 }: React.HTMLAttributes<HTMLDivElement>) {
   const instance = useCurrentEditor();
   const slice = useEditorState(instance, (state) => {
+    const scene_id = state.scene_id!;
     const scene = state.document.nodes[
-      state.scene_id!
+      scene_id
     ] as grida.program.nodes.SceneNode;
+    const sceneUserData = state.document.metadata?.[scene_id]?.userdata as
+      | Record<string, unknown>
+      | undefined;
+    const stageIdRaw = sceneUserData?.rhema_stage_node_id;
+    const sceneChildren = state.document.links[scene_id] ?? [];
+    const inferredStageId =
+      sceneChildren.find((id) => {
+        const node = state.document.nodes[id];
+        return node?.type === "container" && node.name === "Canvas 1920x1080";
+      }) ?? null;
+    const stageId =
+      typeof stageIdRaw === "string" ? stageIdRaw : inferredStageId;
+    const stageNode = stageId
+      ? (state.document.nodes[stageId] as grida.program.nodes.Node | undefined)
+      : undefined;
+    const stageRect =
+      stageNode &&
+      stageNode.type === "container" &&
+      typeof stageNode.layout_inset_left === "number" &&
+      typeof stageNode.layout_inset_top === "number" &&
+      typeof stageNode.layout_target_width === "number" &&
+      typeof stageNode.layout_target_height === "number"
+        ? {
+            x: stageNode.layout_inset_left,
+            y: stageNode.layout_inset_top,
+            width: stageNode.layout_target_width,
+            height: stageNode.layout_target_height,
+          }
+        : null;
     return {
       backgroundColor: scene?.background_color,
       transform: state.transform,
+      isRhemaScene:
+        sceneUserData?.rhema_profile === "bible-helper" ||
+        scene?.name?.startsWith("Theme "),
+      stageRect,
     };
   });
-  const { backgroundColor, transform } = slice;
+  const { backgroundColor, transform, isRhemaScene, stageRect } = slice;
 
   const cssBackgroundColor = useMemo(() => {
     if (!backgroundColor) return undefined;
@@ -119,6 +154,22 @@ export function StandaloneSceneBackground({
   }, [backgroundColor]);
 
   const [visiblearea, { width, height }] = useMeasure();
+  const stageViewportRect = useMemo(() => {
+    if (!isRhemaScene || !stageRect) return null;
+
+    const tl = cmath.vector2.transform([stageRect.x, stageRect.y], transform);
+    const br = cmath.vector2.transform(
+      [stageRect.x + stageRect.width, stageRect.y + stageRect.height],
+      transform
+    );
+
+    return {
+      left: Math.min(tl[0], br[0]),
+      top: Math.min(tl[1], br[1]),
+      width: Math.abs(br[0] - tl[0]),
+      height: Math.abs(br[1] - tl[1]),
+    };
+  }, [isRhemaScene, stageRect, transform]);
 
   return (
     <div {...props}>
@@ -126,17 +177,50 @@ export function StandaloneSceneBackground({
         ref={visiblearea}
         className="absolute inset-0 pointer-events-none overflow-hidden -z-10"
       >
-        {/* root bg - transparency grid */}
-        <TransparencyGrid
-          transform={transform}
-          width={width ?? 0}
-          height={height ?? 0}
-        />
-        {/* background color */}
-        <div
-          className="absolute inset-0 overflow-hidden"
-          style={{ backgroundColor: cssBackgroundColor }}
-        />
+        {isRhemaScene && stageViewportRect ? (
+          <>
+            <div
+              className="absolute inset-0 overflow-hidden"
+              style={{ backgroundColor: "#808080" }}
+            />
+            <div
+              className="absolute overflow-hidden"
+              style={{
+                left: stageViewportRect.left,
+                top: stageViewportRect.top,
+                width: stageViewportRect.width,
+                height: stageViewportRect.height,
+                border: "1px solid rgba(255,255,255,0.45)",
+                boxShadow:
+                  "0 0 0 1px rgba(0,0,0,0.25), 0 10px 24px rgba(0,0,0,0.22)",
+              }}
+            >
+              <TransparencyGrid
+                transform={transform}
+                width={width ?? 0}
+                height={height ?? 0}
+              />
+              <div
+                className="absolute inset-0 overflow-hidden"
+                style={{ backgroundColor: "#ffffff" }}
+              />
+            </div>
+          </>
+        ) : (
+          <>
+            {/* root bg - transparency grid */}
+            <TransparencyGrid
+              transform={transform}
+              width={width ?? 0}
+              height={height ?? 0}
+            />
+            {/* background color */}
+            <div
+              className="absolute inset-0 overflow-hidden"
+              style={{ backgroundColor: cssBackgroundColor }}
+            />
+          </>
+        )}
       </div>
       {children}
     </div>

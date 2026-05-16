@@ -291,12 +291,17 @@ export function ToolsGroup({
   value,
   options,
   onValueChange,
+  onPrimaryClick,
   open,
   onOpenChange,
 }: {
   value: ToolbarToolType;
   options: Array<{ value: ToolbarToolType; label: string; shortcut?: string }>;
   onValueChange?: (value: ToolbarToolType) => void;
+  onPrimaryClick?: (
+    value: ToolbarToolType,
+    event: React.MouseEvent<HTMLButtonElement>
+  ) => void;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
@@ -318,6 +323,7 @@ export function ToolsGroup({
         className="aspect-square"
         label={options.find((o) => o.value === primary)?.label}
         shortcut={options.find((o) => o.value === primary)?.shortcut}
+        onClick={(event) => onPrimaryClick?.(primary, event)}
       >
         <ToolIcon type={primary} className="size-4" />
       </ToolGroupItem>

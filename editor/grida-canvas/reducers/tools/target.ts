@@ -4,6 +4,24 @@ import grida from "@grida/schema";
 import tree from "@grida/tree";
 import { perf } from "@/grida-canvas/perf";
 
+function getRhemaStageId(context: editor.state.IEditorState): string | null {
+  const scene_id = context.scene_id;
+  if (!scene_id) return null;
+  const sceneMeta = context.document.metadata?.[scene_id];
+  const userdata = sceneMeta?.userdata as Record<string, unknown> | undefined;
+  if (userdata?.rhema_profile !== "bible-helper") return null;
+  const stageId = userdata?.rhema_stage_node_id;
+  return typeof stageId === "string" ? stageId : null;
+}
+
+function isRhemaStageNode(
+  context: editor.state.IEditorState,
+  node_id: string
+): boolean {
+  const stageId = getRhemaStageId(context);
+  return !!stageId && node_id === stageId;
+}
+
 /**
  * Gets the top/root node ID for a given node within a scene context.
  * Returns the node_id itself if no top/root can be determined.
@@ -131,6 +149,11 @@ export function getRayTarget(
 
         if (config.ignores_locked && node.locked) {
           return false; // Ignore locked nodes if configured
+        }
+
+        // Rhema stage is a host frame, not a direct selection target.
+        if (isRhemaStageNode(context, node_id)) {
+          return false;
         }
 
         return true; // Include this node
@@ -288,6 +311,7 @@ export function getMarqueeSelection(
 
     if (!hit) return false;
     if (hit.locked) return false;
+    if (isRhemaStageNode(state, hit_id)) return false;
 
     // (3). the parent of this node shall also be hit by the marquee (unless it's the root node)
     const parent_id = dq.getParentId(document_ctx, hit_id);

@@ -22,6 +22,162 @@ import type { ReducerContext } from "..";
 import { self_update_gesture_scale } from "./scale";
 import { perf } from "@/grida-canvas/perf";
 
+type StageBoundsConfig = {
+  stageId: string;
+  bounds: cmath.Rectangle;
+};
+
+function getRhemaStageBoundsConfig(
+  draft: Draft<editor.state.IEditorState>,
+  context: ReducerContext
+): StageBoundsConfig | null {
+  if (!draft.scene_id) return null;
+
+  const sceneMeta = draft.document.metadata?.[draft.scene_id];
+  const userdata = sceneMeta?.userdata as
+    | Record<string, string | number | boolean | null | undefined>
+    | undefined;
+
+  if (userdata?.rhema_profile !== "bible-helper") return null;
+  if (userdata?.rhema_lock_to_stage !== true) return null;
+
+  const stageId = userdata?.rhema_stage_node_id;
+  if (typeof stageId !== "string" || stageId.length === 0) return null;
+
+  const bounds = context.geometry.getNodeAbsoluteBoundingRect(stageId);
+  if (!bounds) return null;
+
+  return { stageId, bounds };
+}
+
+function getClampOffsetForUnion(
+  union: cmath.Rectangle,
+  bounds: cmath.Rectangle
+): cmath.Vector2 {
+  let ox = 0;
+  let oy = 0;
+
+  const unionRight = union.x + union.width;
+  const unionBottom = union.y + union.height;
+  const boundsRight = bounds.x + bounds.width;
+  const boundsBottom = bounds.y + bounds.height;
+
+  if (union.x < bounds.x) {
+    ox = bounds.x - union.x;
+  } else if (unionRight > boundsRight) {
+    ox = boundsRight - unionRight;
+  }
+
+  if (union.y < bounds.y) {
+    oy = bounds.y - union.y;
+  } else if (unionBottom > boundsBottom) {
+    oy = boundsBottom - unionBottom;
+  }
+
+  return [ox, oy];
+}
+
+function clampMovementToBounds(
+  rects: cmath.Rectangle[],
+  movement: cmath.ext.movement.Movement,
+  bounds: cmath.Rectangle
+): cmath.ext.movement.Movement {
+  if (rects.length === 0) return movement;
+  if (movement[0] === null && movement[1] === null) return movement;
+
+  const normalized = cmath.ext.movement.normalize(movement);
+  const moved = rects.map((r) => cmath.rect.translate(r, normalized));
+  const union = cmath.rect.union(moved);
+  const [ox, oy] = getClampOffsetForUnion(union, bounds);
+
+  return [
+    movement[0] === null ? null : normalized[0] + ox,
+    movement[1] === null ? null : normalized[1] + oy,
+  ];
+}
+
+function clampTranslatedPositionsToBounds(
+  initialRects: cmath.Rectangle[],
+  translated: { position: cmath.Vector2 }[],
+  bounds: cmath.Rectangle
+): { position: cmath.Vector2 }[] {
+  if (translated.length === 0) return translated;
+  if (translated.length !== initialRects.length) return translated;
+
+  const movedRects = translated.map((t, i) => {
+    const r = initialRects[i]!;
+    return {
+      x: t.position[0],
+      y: t.position[1],
+      width: r.width,
+      height: r.height,
+    } satisfies cmath.Rectangle;
+  });
+
+  const union = cmath.rect.union(movedRects);
+  const [ox, oy] = getClampOffsetForUnion(union, bounds);
+  if (ox === 0 && oy === 0) return translated;
+
+  return translated.map((t) => ({
+    position: [t.position[0] + ox, t.position[1] + oy],
+  }));
+}
+
+function clampSelectionIntoRhemaStage(
+  draft: Draft<editor.state.IEditorState>,
+  selection: string[],
+  context: ReducerContext
+) {
+  const stageConfig = getRhemaStageBoundsConfig(draft, context);
+  if (!stageConfig) return;
+
+  const movableSelection = selection.filter((id) => id !== stageConfig.stageId);
+  if (movableSelection.length === 0) return;
+
+  const rects = movableSelection
+    .map((id) => context.geometry.getNodeAbsoluteBoundingRect(id))
+    .filter(Boolean) as cmath.Rectangle[];
+  if (rects.length === 0) return;
+
+  const union = cmath.rect.union(rects);
+  const [ox, oy] = getClampOffsetForUnion(union, stageConfig.bounds);
+  if (ox === 0 && oy === 0) return;
+
+  for (const node_id of movableSelection) {
+    const node = dq.__getNodeById(draft, node_id);
+    updateNodeTransform(
+      node,
+      {
+        type: "translate",
+        dx: ox,
+        dy: oy,
+      },
+      context.geometry,
+      node_id
+    );
+  }
+}
+
+function createStageGuides(
+  stage: cmath.Rectangle
+): grida.program.document.Guide2D[] {
+  const x0 = stage.x;
+  const x1 = stage.x + stage.width / 2;
+  const x2 = stage.x + stage.width;
+  const y0 = stage.y;
+  const y1 = stage.y + stage.height / 2;
+  const y2 = stage.y + stage.height;
+
+  return [
+    { axis: "x", offset: x0 },
+    { axis: "x", offset: x1 },
+    { axis: "x", offset: x2 },
+    { axis: "y", offset: y0 },
+    { axis: "y", offset: y1 },
+    { axis: "y", offset: y2 },
+  ];
+}
+
 /**
  * Determines if a node type allows hierarchy changes during translation.
  * Container nodes and scenes allow children to escape/enter during translation.
@@ -50,21 +206,49 @@ export function self_nudge_transform<S extends editor.state.IEditorState>(
   dy: number,
   context: ReducerContext
 ) {
+  const selectionSet = new Set(targets);
+  const stageConfig = getRhemaStageBoundsConfig(
+    draft as Draft<editor.state.IEditorState>,
+    context
+  );
+  if (stageConfig) {
+    const targetRects = targets
+      .map((node_id) => context.geometry.getNodeAbsoluteBoundingRect(node_id))
+      .filter(Boolean) as cmath.Rectangle[];
+    const clampedMovement = clampMovementToBounds(
+      targetRects,
+      [dx, dy],
+      stageConfig.bounds
+    );
+    dx = clampedMovement[0] ?? dx;
+    dy = clampedMovement[1] ?? dy;
+  }
+
   // clear the previous surface snapping
   draft.surface_snapping = undefined;
 
   // for nudge, gesture is not required, but only for surface ux.
   if (draft.gesture.type === "nudge") {
     const snap_target_node_ids = getSnapTargets(draft.selection, draft);
-    const snap_target_node_rects = snap_target_node_ids.map(
-      (node_id) => context.geometry.getNodeAbsoluteBoundingRect(node_id)!
-    );
+    const snap_target_node_rects = snap_target_node_ids
+      .filter((node_id) => !selectionSet.has(node_id))
+      .map((node_id) => context.geometry.getNodeAbsoluteBoundingRect(node_id)!)
+      .filter(Boolean);
+    const anchorObjects = stageConfig
+      ? snap_target_node_rects.concat([stageConfig.bounds])
+      : snap_target_node_rects;
+    const anchorGuides = stageConfig
+      ? createStageGuides(stageConfig.bounds)
+      : [];
     const origin_rects = targets.map(
       (node_id) => context.geometry.getNodeAbsoluteBoundingRect(node_id)!
     );
     const { snapping } = snapObjectsTranslation(
       origin_rects,
-      { objects: snap_target_node_rects },
+      {
+        objects: anchorObjects,
+        guides: anchorGuides.length > 0 ? anchorGuides : undefined,
+      },
       [dx, dy],
       editor.config.DEFAULT_SNAP_NUDGE_THRESHOLD
     );
@@ -84,6 +268,12 @@ export function self_nudge_transform<S extends editor.state.IEditorState>(
       node_id
     );
   }
+
+  clampSelectionIntoRhemaStage(
+    draft as Draft<editor.state.IEditorState>,
+    targets,
+    context
+  );
 }
 
 export function self_update_gesture_transform<
@@ -391,19 +581,31 @@ function __self_update_gesture_transform_translate(
     document_ctx: draft.document_ctx,
     document: orig.document,
   });
+  const selectionSet = new Set(current_selection);
   const snap_target_node_rects = snap_target_node_ids
+    .filter((node_id) => !selectionSet.has(node_id))
     .map((node_id: string) => {
       const r = context.geometry.getNodeAbsoluteBoundingRect(node_id);
       if (!r) reportError(`Node ${node_id} does not have a bounding rect`);
       return r!;
     })
     .filter(Boolean);
+  const stageConfig = getRhemaStageBoundsConfig(draft, context);
+  const anchorObjects = stageConfig
+    ? snap_target_node_rects.concat([stageConfig.bounds])
+    : snap_target_node_rects;
+  const stageGuides = stageConfig ? createStageGuides(stageConfig.bounds) : [];
+  const sceneGuides = draft.ruler === "on" ? scene.guides : [];
+  const guides =
+    stageGuides.length > 0 || sceneGuides.length > 0
+      ? sceneGuides.concat(stageGuides)
+      : undefined;
 
   const { translated, snapping } = snapObjectsTranslation(
     initial_rects,
     {
-      objects: snap_target_node_rects,
-      guides: draft.ruler === "on" ? scene.guides : undefined,
+      objects: anchorObjects,
+      guides,
     },
     adj_movement,
     threshold(
@@ -412,6 +614,14 @@ function __self_update_gesture_transform_translate(
     ),
     should_snap
   );
+
+  const translatedWithinStage = stageConfig
+    ? clampTranslatedPositionsToBounds(
+        initial_rects,
+        translated,
+        stageConfig.bounds
+      )
+    : translated;
 
   draft.surface_snapping = snapping;
 
@@ -422,7 +632,7 @@ function __self_update_gesture_transform_translate(
       // Must use draft here — updateNodeTransform writes to this node.
       const node = draft.document.nodes[node_id];
       if (!node) continue;
-      const r = translated[i++];
+      const r = translatedWithinStage[i++];
 
       // Use current document_ctx (may have been updated by hierarchy change).
       const parent_id = dq.getParentId(draft.document_ctx, node_id);
@@ -560,7 +770,13 @@ function __self_update_gesture_transform_scale(
   draft: Draft<editor.state.IEditorState>,
   context: ReducerContext
 ) {
-  return self_update_gesture_scale(draft, context);
+  self_update_gesture_scale(draft, context);
+  if (
+    draft.gesture.type === "scale" ||
+    draft.gesture.type === "insert-and-resize"
+  ) {
+    clampSelectionIntoRhemaStage(draft, draft.gesture.selection, context);
+  }
 }
 
 function __self_update_gesture_transform_rotate(

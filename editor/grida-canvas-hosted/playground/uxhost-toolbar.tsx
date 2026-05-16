@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useCurrentEditor, useEditorState } from "@/grida-canvas-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,18 +36,31 @@ import {
 import { RGBChip } from "@/scaffolds/sidecontrol/controls/utils/paint-chip";
 import { ImageToolbar } from "@/grida-canvas-react-starter-kit/starterkit-toolbar/image-toolbar";
 import { keyboardShortcutText } from "./uxhost-shortcut-renderer";
+import { useInsertFile } from "@/grida-canvas-react/use-data-transfer";
+import { io } from "@grida/io";
+import { toast } from "sonner";
 
-export function PlaygroundToolbar() {
+export function PlaygroundToolbar({
+  profile = "default",
+}: {
+  profile?: "default" | "bible-helper";
+}) {
+  const isBibleHelper = profile === "bible-helper";
   const editor = useCurrentEditor();
+  const { insertFromFile } = useInsertFile();
   const tool = useToolState();
   const content_edit_mode = useContentEditModeMinimalState();
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const value = toolmode_to_toolbar_value(tool);
   const [open, setOpen] = useState<string | null>(null);
+  const openImagePicker = () => {
+    imageInputRef.current?.click();
+  };
 
   return (
     <div className="relative" aria-label="Toolbar">
-      <ImageToolbar />
+      {!isBibleHelper && <ImageToolbar />}
       {content_edit_mode?.type === "bitmap" && (
         <div className="relative bottom-2 w-full flex justify-center">
           <BitmapEditModeAuxiliaryToolbar />
@@ -70,58 +83,85 @@ export function PlaygroundToolbar() {
             value={value}
             open={open === "cursor"}
             onOpenChange={(o) => setOpen(o ? "cursor" : null)}
-            options={[
-              {
-                value: "cursor",
-                label: "Cursor",
-                shortcut: keyboardShortcutText(
-                  "workbench.surface.cursor.cursor"
-                ),
-              },
-              {
-                value: "hand",
-                label: "Hand tool",
-                shortcut: keyboardShortcutText("workbench.surface.cursor.hand"),
-              },
-              {
-                value: "scale",
-                label: "Scale tool",
-                shortcut: keyboardShortcutText(
-                  "workbench.surface.cursor.scale"
-                ),
-              },
-            ]}
+            options={
+              isBibleHelper
+                ? [
+                    {
+                      value: "cursor",
+                      label: "Cursor",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.cursor"
+                      ),
+                    },
+                    {
+                      value: "hand",
+                      label: "Hand tool",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.hand"
+                      ),
+                    },
+                  ]
+                : [
+                    {
+                      value: "cursor",
+                      label: "Cursor",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.cursor"
+                      ),
+                    },
+                    {
+                      value: "hand",
+                      label: "Hand tool",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.hand"
+                      ),
+                    },
+                    {
+                      value: "scale",
+                      label: "Scale tool",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.scale"
+                      ),
+                    },
+                  ]
+            }
             onValueChange={(v) => {
               editor.surface.surfaceSetTool(
                 toolbar_value_to_cursormode(v as ToolbarToolType)
               );
             }}
           />
-          <VerticalDivider />
-          <ToolsGroup
-            value={value}
-            open={open === "container"}
-            onOpenChange={(o) => setOpen(o ? "container" : null)}
-            options={[
-              {
-                value: "container",
-                label: "Container",
-                shortcut: keyboardShortcutText(
-                  "workbench.surface.cursor.container"
-                ),
-              },
-              {
-                value: "tray",
-                label: "Tray",
-                shortcut: keyboardShortcutText("workbench.surface.cursor.tray"),
-              },
-            ]}
-            onValueChange={(v) => {
-              editor.surface.surfaceSetTool(
-                toolbar_value_to_cursormode(v as ToolbarToolType)
-              );
-            }}
-          />
+          {!isBibleHelper && (
+            <>
+              <VerticalDivider />
+              <ToolsGroup
+                value={value}
+                open={open === "container"}
+                onOpenChange={(o) => setOpen(o ? "container" : null)}
+                options={[
+                  {
+                    value: "container",
+                    label: "Container",
+                    shortcut: keyboardShortcutText(
+                      "workbench.surface.cursor.container"
+                    ),
+                  },
+                  {
+                    value: "tray",
+                    label: "Tray",
+                    shortcut: keyboardShortcutText(
+                      "workbench.surface.cursor.tray"
+                    ),
+                  },
+                ]}
+                onValueChange={(v) => {
+                  editor.surface.surfaceSetTool(
+                    toolbar_value_to_cursormode(v as ToolbarToolType)
+                  );
+                }}
+              />
+            </>
+          )}
           <ToolGroupItem
             value={"text" satisfies ToolbarToolType}
             label="Text tool"
@@ -133,87 +173,144 @@ export function PlaygroundToolbar() {
             value={value}
             open={open === "shape"}
             onOpenChange={(o) => setOpen(o ? "shape" : null)}
-            options={[
-              {
-                value: "rectangle",
-                label: "Rectangle",
-                shortcut: keyboardShortcutText(
-                  "workbench.surface.cursor.rectangle"
-                ),
-              },
-              {
-                value: "ellipse",
-                label: "Ellipse",
-                shortcut: keyboardShortcutText(
-                  "workbench.surface.cursor.ellipse"
-                ),
-              },
-              {
-                value: "line",
-                label: "Line",
-                shortcut: keyboardShortcutText("workbench.surface.cursor.line"),
-              },
-              {
-                value: "arrow",
-                label: "Arrow",
-                shortcut: keyboardShortcutText(
-                  "workbench.surface.cursor.arrow"
-                ),
-              },
-              {
-                value: "polygon",
-                label: "Polygon",
-                shortcut: keyboardShortcutText(
-                  "workbench.surface.cursor.polygon"
-                ),
-              },
-              { value: "star", label: "Star" },
-              { value: "image", label: "Image" },
-            ]}
+            onPrimaryClick={(toolValue) => {
+              if (isBibleHelper && toolValue === "image") {
+                openImagePicker();
+              }
+            }}
+            options={
+              isBibleHelper
+                ? [
+                    {
+                      value: "rectangle",
+                      label: "Rectangle",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.rectangle"
+                      ),
+                    },
+                    {
+                      value: "ellipse",
+                      label: "Ellipse",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.ellipse"
+                      ),
+                    },
+                    {
+                      value: "line",
+                      label: "Line",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.line"
+                      ),
+                    },
+                    {
+                      value: "arrow",
+                      label: "Arrow",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.arrow"
+                      ),
+                    },
+                    {
+                      value: "polygon",
+                      label: "Polygon",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.polygon"
+                      ),
+                    },
+                    { value: "star", label: "Star" },
+                    { value: "image", label: "Image" },
+                  ]
+                : [
+                    {
+                      value: "rectangle",
+                      label: "Rectangle",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.rectangle"
+                      ),
+                    },
+                    {
+                      value: "ellipse",
+                      label: "Ellipse",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.ellipse"
+                      ),
+                    },
+                    {
+                      value: "line",
+                      label: "Line",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.line"
+                      ),
+                    },
+                    {
+                      value: "arrow",
+                      label: "Arrow",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.arrow"
+                      ),
+                    },
+                    {
+                      value: "polygon",
+                      label: "Polygon",
+                      shortcut: keyboardShortcutText(
+                        "workbench.surface.cursor.polygon"
+                      ),
+                    },
+                    { value: "star", label: "Star" },
+                    { value: "image", label: "Image" },
+                  ]
+            }
             onValueChange={(v) => {
+              if (isBibleHelper && v === "image") {
+                openImagePicker();
+                return;
+              }
               editor.surface.surfaceSetTool(
                 toolbar_value_to_cursormode(v as ToolbarToolType)
               );
             }}
           />
-          <ToolsGroup
-            value={value}
-            open={open === "draw"}
-            onOpenChange={(o) => setOpen(o ? "draw" : null)}
-            options={[
-              {
-                value: "pencil",
-                label: "Pencil tool",
-                shortcut: keyboardShortcutText(
-                  "workbench.surface.cursor.pencil"
-                ),
-              },
-              {
-                value: "path",
-                label: "Path tool",
-                shortcut: keyboardShortcutText("workbench.surface.cursor.path"),
-              },
-              {
-                value: "brush",
-                label: "Brush tool",
-                shortcut: keyboardShortcutText(
-                  "workbench.surface.cursor.brush"
-                ),
-              },
-              {
-                value: "eraser",
-                label: "Eraser tool",
-                shortcut: keyboardShortcutText(
-                  "workbench.surface.cursor.eraser"
-                ),
-              },
-            ]}
-            onValueChange={(v) => {
-              editor.surface.surfaceSetTool(
-                toolbar_value_to_cursormode(v as ToolbarToolType)
-              );
-            }}
-          />
+          {!isBibleHelper && (
+            <ToolsGroup
+              value={value}
+              open={open === "draw"}
+              onOpenChange={(o) => setOpen(o ? "draw" : null)}
+              options={[
+                {
+                  value: "pencil",
+                  label: "Pencil tool",
+                  shortcut: keyboardShortcutText(
+                    "workbench.surface.cursor.pencil"
+                  ),
+                },
+                {
+                  value: "path",
+                  label: "Path tool",
+                  shortcut: keyboardShortcutText(
+                    "workbench.surface.cursor.path"
+                  ),
+                },
+                {
+                  value: "brush",
+                  label: "Brush tool",
+                  shortcut: keyboardShortcutText(
+                    "workbench.surface.cursor.brush"
+                  ),
+                },
+                {
+                  value: "eraser",
+                  label: "Eraser tool",
+                  shortcut: keyboardShortcutText(
+                    "workbench.surface.cursor.eraser"
+                  ),
+                },
+              ]}
+              onValueChange={(v) => {
+                editor.surface.surfaceSetTool(
+                  toolbar_value_to_cursormode(v as ToolbarToolType)
+                );
+              }}
+            />
+          )}
           <VerticalDivider />
           <ClipboardColor />
           {/* <VerticalDivider /> */}
@@ -236,6 +333,25 @@ export function PlaygroundToolbar() {
             <MixIcon />
           </Button> */}
         </ToggleGroupPrimitive.Root>
+        {isBibleHelper && (
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.currentTarget.value = "";
+              if (!file) return;
+              const [valid, type] = io.clipboard.filetype(file);
+              if (!valid) {
+                toast.error(`file type '${type}' is not supported`);
+                return;
+              }
+              insertFromFile(type, file);
+            }}
+          />
+        )}
       </div>
     </div>
   );

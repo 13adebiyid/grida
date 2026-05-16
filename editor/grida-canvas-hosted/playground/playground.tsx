@@ -35,7 +35,7 @@ import {
 import { GridaLogo } from "@/components/grida-logo";
 import { DevtoolsPanel } from "@/grida-canvas-react/devtools";
 import { FontFamilyListProvider } from "@/scaffolds/sidecontrol/controls/font-family";
-import { PlusIcon, Cross1Icon } from "@radix-ui/react-icons";
+import { PlusIcon, Cross1Icon, InfoCircledIcon } from "@radix-ui/react-icons";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -77,6 +77,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Switch } from "@/components/ui/switch";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import ErrorBoundary from "./error-boundary";
 import { uikbdk, M } from "@/grida-canvas/keybinding";
@@ -116,7 +117,63 @@ import { StarterKitOrgIdProvider } from "@/grida-canvas-react-starter-kit/starte
 import { PlaygroundMenuContent } from "./uxhost-menu";
 import { Library } from "../library/library";
 import { io } from "@grida/io";
+import grida from "@grida/schema";
+import kolor from "@grida/color";
+import cg from "@grida/cg";
+import cmath from "@grida/cmath";
+import { saveAs } from "file-saver";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
+import {
+  buildRhemaThemeRuntimeJson,
+  RHEMA_REFERENCE_BINDING_KEY,
+  RHEMA_REFERENCE_INCLUDE_VERSION_KEY,
+  RHEMA_SCRIPTURE_BINDING_KEY,
+} from "./rhema-contract";
+
+const RHEMA_SCENE_BACKGROUND = kolor.colorformats.RGBA32F.fromHEX("#00000000");
+const RHEMA_STAGE_NAME = "Canvas 1920x1080";
+const RHEMA_STAGE_WIDTH = 1920;
+const RHEMA_STAGE_HEIGHT = 1080;
+const RHEMA_SERVICE_REFERENCE_KEY = "rhema_service_reference";
+const RHEMA_SERVICE_REFERENCE_NODE_KEY = "rhema_service_reference_node_id";
+const RHEMA_SERVICE_REFERENCE_IMAGES = {
+  preacher: "/images/preacher-placeholder.jpg",
+  singer: "/images/lyrics-placeholder.jpg",
+} as const;
+
+function isRhemaStageCandidate(
+  node: grida.program.nodes.Node | undefined
+): node is grida.program.nodes.ContainerNode {
+  if (!node || node.type !== "container") return false;
+  return (
+    node.name === RHEMA_STAGE_NAME ||
+    (typeof node.layout_target_width === "number" &&
+      typeof node.layout_target_height === "number" &&
+      node.layout_target_width >= 1280 &&
+      node.layout_target_height >= 720)
+  );
+}
+
+function createRhemaStagePrototype(): grida.program.nodes.ContainerNodePrototype {
+  return {
+    type: "container",
+    name: RHEMA_STAGE_NAME,
+    children: [],
+    layout_positioning: "absolute",
+    layout_inset_left: 0,
+    layout_inset_top: 0,
+    layout_target_width: RHEMA_STAGE_WIDTH,
+    layout_target_height: RHEMA_STAGE_HEIGHT,
+    clips_content: true,
+    fill: {
+      type: "solid",
+      color: RHEMA_SCENE_BACKGROUND,
+      active: true,
+    },
+    stroke_width: 1,
+    stroke_align: "inside",
+  };
+}
 
 /**
  * Generates a filesystem-safe key from a URL path.
@@ -330,6 +387,12 @@ export type CanvasPlaygroundProps = {
    * message instead of erroring.
    */
   organizationId?: number | null;
+  /**
+   * Route-level UI profile for controlled stripping.
+   * - default: full Grida playground behavior
+   * - bible-helper: disables non-essential overlays/surfaces while preserving core editor UI
+   */
+  profile?: "default" | "bible-helper";
 } & Partial<UserCustomTemplatesProps>;
 
 export default function CanvasPlayground({
@@ -341,6 +404,7 @@ export default function CanvasPlayground({
   filekey,
   warnOnUnsavedChanges = false,
   organizationId,
+  profile = "default",
 }: CanvasPlaygroundProps) {
   // Determine filekey: explicit prop > auto-generated from src > default "current"
   const resolvedFilekey = useMemo(() => {
@@ -351,7 +415,10 @@ export default function CanvasPlayground({
 
   const instance = useEditor(document, backend);
   useDisableSwipeBack();
-  useSyncMultiplayerCursors(instance, room_id);
+  useSyncMultiplayerCursors(
+    instance,
+    profile === "bible-helper" ? undefined : room_id
+  );
   const fonts = useEditorState(instance, (state) => state.webfontlist.items);
   const opfs = usePlaygroundOPFS(resolvedFilekey);
   const { dirty, markSaved } = usePlaygroundDirtyFlag(
@@ -570,6 +637,7 @@ export default function CanvasPlayground({
                           canvasRef={handleCanvasRef}
                           onSaved={markSaved}
                           filekey={resolvedFilekey}
+                          profile={profile}
                         />
                       </StarterKitOrgIdProvider>
                     </UserCustomTemplatesProvider>
@@ -589,12 +657,15 @@ function Consumer({
   canvasRef,
   onSaved,
   filekey,
+  profile,
 }: {
   backend: "dom" | "canvas";
   canvasRef?: (canvas: HTMLCanvasElement | null) => void;
   onSaved: () => void;
   filekey: string;
+  profile: "default" | "bible-helper";
 }) {
+  const isBibleHelper = profile === "bible-helper";
   const {
     ui,
     toggleVisibility,
@@ -605,9 +676,229 @@ function Consumer({
   const instance = useCurrentEditor();
   const opfs = usePlaygroundOPFS(filekey);
   const debug = useEditorState(instance, (state) => state.debug);
+  const sceneMeta = useEditorState(instance, (state) => {
+    const scene_id = state.scene_id;
+    if (!scene_id) return null;
+    const scene = state.document.nodes[scene_id];
+    if (!scene || scene.type !== "scene") return null;
+    const childIds = state.document.links[scene_id] ?? [];
+    const sceneUserData = state.document.metadata?.[scene_id]?.userdata as
+      | Record<string, unknown>
+      | undefined;
+    const stageIdRaw = sceneUserData?.rhema_stage_node_id;
+    const explicitStageId = typeof stageIdRaw === "string" ? stageIdRaw : null;
+    const explicitStageNode = explicitStageId
+      ? state.document.nodes[explicitStageId]
+      : undefined;
+    const stageId =
+      (explicitStageId &&
+      childIds.includes(explicitStageId) &&
+      isRhemaStageCandidate(explicitStageNode)
+        ? explicitStageId
+        : null) ??
+      childIds.find((id) => isRhemaStageCandidate(state.document.nodes[id])) ??
+      null;
+    return {
+      id: scene_id,
+      name: scene.name,
+      childIds,
+      childrenCount: childIds.length,
+      stageId,
+    };
+  });
+  const initializedRhemaSceneIdsRef = useRef<Set<string>>(new Set());
+  const rhemaMigratedSceneIdsRef = useRef<Set<string>>(new Set());
   const libraryWindowControls = useFloatingWindowControls({
     defaultOpen: false,
   });
+
+  useEffect(() => {
+    if (!isBibleHelper || !sceneMeta) return;
+    if (sceneMeta.name === "main") {
+      instance.commands.renameScene(sceneMeta.id, "Theme 1");
+    }
+  }, [instance, isBibleHelper, sceneMeta]);
+
+  useEffect(() => {
+    if (!isBibleHelper || !sceneMeta) return;
+    const sceneUserData = (instance.getUserData(sceneMeta.id) ?? {}) as Record<
+      string,
+      unknown
+    >;
+    const missingRhemaProfile =
+      sceneUserData.rhema_profile !== "bible-helper" ||
+      sceneUserData.rhema_lock_to_stage !== true;
+    const existingStageId =
+      typeof sceneUserData.rhema_stage_node_id === "string"
+        ? sceneUserData.rhema_stage_node_id
+        : null;
+    const existingStageNode = existingStageId
+      ? instance.state.document.nodes[existingStageId]
+      : undefined;
+    let stageId = existingStageId;
+
+    if (
+      !stageId ||
+      !sceneMeta.childIds.includes(stageId) ||
+      !isRhemaStageCandidate(existingStageNode)
+    ) {
+      stageId =
+        sceneMeta.childIds.find((id) => {
+          return isRhemaStageCandidate(instance.state.document.nodes[id]);
+        }) ?? null;
+    }
+
+    if (!stageId) return;
+    if (!missingRhemaProfile && stageId === existingStageId) return;
+
+    instance.setUserData(sceneMeta.id, {
+      ...sceneUserData,
+      rhema_profile: "bible-helper",
+      rhema_lock_to_stage: true,
+      rhema_stage_node_id: stageId,
+    });
+  }, [instance, isBibleHelper, sceneMeta]);
+
+  useEffect(() => {
+    if (!isBibleHelper || !sceneMeta?.stageId) return;
+    const stageNode = instance.state.document.nodes[sceneMeta.stageId];
+    if (!isRhemaStageCandidate(stageNode)) return;
+
+    const needsPositioningUpdate =
+      stageNode.layout_positioning !== "absolute" ||
+      stageNode.layout_inset_left !== 0 ||
+      stageNode.layout_inset_top !== 0 ||
+      stageNode.layout_target_width !== RHEMA_STAGE_WIDTH ||
+      stageNode.layout_target_height !== RHEMA_STAGE_HEIGHT;
+
+    if (needsPositioningUpdate) {
+      instance.commands.changeNodePropertyPositioning(sceneMeta.stageId, {
+        layout_positioning: "absolute",
+        layout_inset_left: 0,
+        layout_inset_top: 0,
+      });
+      instance.commands.changeNodeSize(
+        sceneMeta.stageId,
+        "width",
+        RHEMA_STAGE_WIDTH
+      );
+      instance.commands.changeNodeSize(
+        sceneMeta.stageId,
+        "height",
+        RHEMA_STAGE_HEIGHT
+      );
+    }
+
+    if (stageNode.clips_content !== true) {
+      instance.commands.changeContainerNodeClipsContent(
+        sceneMeta.stageId,
+        true
+      );
+    }
+  }, [instance, isBibleHelper, sceneMeta]);
+
+  useEffect(() => {
+    if (!isBibleHelper || !sceneMeta) return;
+    if (sceneMeta.childrenCount > 0) {
+      instance.commands.changeSceneBackground(
+        sceneMeta.id,
+        RHEMA_SCENE_BACKGROUND
+      );
+      initializedRhemaSceneIdsRef.current.add(sceneMeta.id);
+      return;
+    }
+    if (initializedRhemaSceneIdsRef.current.has(sceneMeta.id)) return;
+
+    initializedRhemaSceneIdsRef.current.add(sceneMeta.id);
+    instance.commands.changeSceneBackground(
+      sceneMeta.id,
+      RHEMA_SCENE_BACKGROUND
+    );
+    const inserted = instance.commands.insert(
+      {
+        prototype: createRhemaStagePrototype(),
+      },
+      null
+    );
+    const stageId = inserted[0];
+    if (stageId) {
+      const sceneUserData = (instance.getUserData(sceneMeta.id) ??
+        {}) as Record<string, unknown>;
+      instance.setUserData(sceneMeta.id, {
+        ...sceneUserData,
+        rhema_profile: "bible-helper",
+        rhema_lock_to_stage: true,
+        rhema_stage_node_id: stageId,
+      });
+    }
+
+    requestAnimationFrame(() => {
+      instance.camera.fit("<scene>", { margin: 64 });
+    });
+  }, [instance, isBibleHelper, sceneMeta]);
+
+  useEffect(() => {
+    if (!isBibleHelper || !sceneMeta) return;
+    if (rhemaMigratedSceneIdsRef.current.has(sceneMeta.id)) return;
+
+    const sceneUserData = (instance.getUserData(sceneMeta.id) ?? {}) as Record<
+      string,
+      unknown
+    >;
+    const stageIdRaw = sceneUserData.rhema_stage_node_id;
+    if (typeof stageIdRaw !== "string") return;
+    const stageNode = instance.state.document.nodes[stageIdRaw];
+    if (!stageNode || stageNode.type !== "container") return;
+
+    const stageRect = instance.getNodeAbsoluteBoundingRect(stageIdRaw);
+    if (!stageRect) return;
+
+    const sceneChildren = sceneMeta.childIds;
+    for (const nodeId of sceneChildren) {
+      if (nodeId === stageIdRaw) continue;
+      const node = instance.state.document.nodes[nodeId];
+      if (!node || node.type === "scene") continue;
+      if (node.layout_positioning !== "absolute") continue;
+      if (
+        typeof node.layout_inset_left !== "number" ||
+        typeof node.layout_inset_top !== "number"
+      ) {
+        continue;
+      }
+
+      const rect = instance.getNodeAbsoluteBoundingRect(nodeId);
+      if (!rect) continue;
+
+      let nextX = node.layout_inset_left;
+      let nextY = node.layout_inset_top;
+      const right = rect.x + rect.width;
+      const bottom = rect.y + rect.height;
+      const stageRight = stageRect.x + stageRect.width;
+      const stageBottom = stageRect.y + stageRect.height;
+
+      if (rect.x < stageRect.x) {
+        nextX += stageRect.x - rect.x;
+      } else if (right > stageRight) {
+        nextX -= right - stageRight;
+      }
+
+      if (rect.y < stageRect.y) {
+        nextY += stageRect.y - rect.y;
+      } else if (bottom > stageBottom) {
+        nextY -= bottom - stageBottom;
+      }
+
+      if (nextX !== node.layout_inset_left || nextY !== node.layout_inset_top) {
+        instance.commands.changeNodePropertyPositioning(nodeId, {
+          layout_positioning: node.layout_positioning,
+          layout_inset_left: Math.round(nextX),
+          layout_inset_top: Math.round(nextY),
+        });
+      }
+    }
+
+    rhemaMigratedSceneIdsRef.current.add(sceneMeta.id);
+  }, [instance, isBibleHelper, sceneMeta]);
 
   useHotkeys(
     "shift+i",
@@ -625,6 +916,7 @@ function Consumer({
       // keep shortcut disabled while typing (library default, made explicit here)
       enableOnFormTags: false,
       enableOnContentEditable: false,
+      enabled: !isBibleHelper,
     }
   );
 
@@ -717,6 +1009,8 @@ function Consumer({
                       toggleVisibility={toggleVisibility}
                       toggleMinimal={toggleMinimal}
                       libraryWindowControls={libraryWindowControls}
+                      showLibrary={!isBibleHelper}
+                      isBibleHelper={isBibleHelper}
                     />
                   )}
                   <EditorSurfaceClipboardSyncProvider />
@@ -726,7 +1020,7 @@ function Consumer({
                         <ViewportRoot className="relative w-full h-full overflow-hidden">
                           <Hotkyes />
                           <EditorSurface />
-                          <LocalFakeCursorChat />
+                          {!isBibleHelper && <LocalFakeCursorChat />}
                           {/* {backend === "canvas" && (
                     <__WIP_UNSTABLE_WasmContent editor={instance} />
                   )} */}
@@ -736,16 +1030,20 @@ function Consumer({
                               <StandaloneSceneContent />
                             </AutoInitialFitTransformer>
                           )}
-                          {ui.toolbar_bottom && (
+                          {(isBibleHelper || ui.toolbar_bottom) && (
                             <>
-                              <BrushToolbarPosition>
-                                <BrushToolbar />
-                              </BrushToolbarPosition>
-                              <PathToolbarPosition>
-                                <PathToolbar />
-                              </PathToolbarPosition>
+                              {!isBibleHelper && (
+                                <BrushToolbarPosition>
+                                  <BrushToolbar />
+                                </BrushToolbarPosition>
+                              )}
+                              {!isBibleHelper && (
+                                <PathToolbarPosition>
+                                  <PathToolbar />
+                                </PathToolbarPosition>
+                              )}
                               <ToolbarPosition>
-                                <PlaygroundToolbar />
+                                <PlaygroundToolbar profile={profile} />
                               </ToolbarPosition>
                             </>
                           )}
@@ -759,44 +1057,49 @@ function Consumer({
                       variant={sidebar_right_variant}
                       tab={rightSidebarTab}
                       setTab={setRightSidebarTab}
+                      isBibleHelper={isBibleHelper}
                     />
                   )}
                 </div>
-                <FloatingWindowRoot
-                  windowId="library"
-                  boundaryRef={boundaryRef}
-                  initialX={260}
-                  initialY={120}
-                  width={360}
-                  height={560}
-                  controls={libraryWindowControls}
-                  className="z-[999] max-h-[calc(100vh-48px)] overflow-hidden flex flex-col"
-                  render={({ dragHandleProps, controls }) => (
-                    <>
-                      <FloatingWindowTitleBar dragHandleProps={dragHandleProps}>
-                        <span className="font-medium text-sm">Library</span>
-                        <FloatingWindowClose
-                          windowId="library"
-                          controls={controls}
-                          className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+                {!isBibleHelper && (
+                  <FloatingWindowRoot
+                    windowId="library"
+                    boundaryRef={boundaryRef}
+                    initialX={260}
+                    initialY={120}
+                    width={360}
+                    height={560}
+                    controls={libraryWindowControls}
+                    className="z-[999] max-h-[calc(100vh-48px)] overflow-hidden flex flex-col"
+                    render={({ dragHandleProps, controls }) => (
+                      <>
+                        <FloatingWindowTitleBar
+                          dragHandleProps={dragHandleProps}
                         >
-                          <Cross1Icon className="size-4" aria-hidden />
-                          <span className="sr-only">Close</span>
-                        </FloatingWindowClose>
-                      </FloatingWindowTitleBar>
-                      <FloatingWindowBody className="p-0 text-sm h-full flex flex-col overflow-hidden">
-                        <Library />
-                      </FloatingWindowBody>
-                    </>
-                  )}
-                />
+                          <span className="font-medium text-sm">Library</span>
+                          <FloatingWindowClose
+                            windowId="library"
+                            controls={controls}
+                            className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            <Cross1Icon className="size-4" aria-hidden />
+                            <span className="sr-only">Close</span>
+                          </FloatingWindowClose>
+                        </FloatingWindowTitleBar>
+                        <FloatingWindowBody className="p-0 text-sm h-full flex flex-col overflow-hidden">
+                          <Library />
+                        </FloatingWindowBody>
+                      </>
+                    )}
+                  />
+                )}
               </>
             )}
           </FloatingWindowBounds>
         </FloatingWindowHost>
       </PreviewProvider>
 
-      {ui.help_fab && rightSidebarTab !== "agent" && (
+      {!isBibleHelper && ui.help_fab && rightSidebarTab !== "agent" && (
         <HelpFab className="absolute right-4 bottom-4" />
       )}
       {/* <CommandPalette /> */}
@@ -877,64 +1180,579 @@ function SidebarLeft({
   toggleVisibility,
   toggleMinimal,
   libraryWindowControls,
+  showLibrary = true,
+  isBibleHelper = false,
 }: {
   toggleVisibility?: () => void;
   toggleMinimal?: () => void;
   libraryWindowControls?: ReturnType<typeof useFloatingWindowControls>;
+  showLibrary?: boolean;
+  isBibleHelper?: boolean;
 }) {
+  const editor = useCurrentEditor();
+  const {
+    activeSceneId,
+    scenesCount,
+    serviceReference,
+    stageId,
+    textLayerOptions,
+    scriptureBindingNodeId,
+    referenceBindingNodeId,
+    includeVersionInReference,
+  } = useEditorState(editor, (state) => {
+    const sceneId = state.scene_id;
+    const sceneUserData = sceneId
+      ? ((state.document.metadata?.[sceneId]?.userdata as
+          | Record<string, unknown>
+          | undefined) ?? {})
+      : {};
+    const serviceReferenceRaw = sceneUserData[RHEMA_SERVICE_REFERENCE_KEY];
+    const serviceReference =
+      serviceReferenceRaw === "preacher" || serviceReferenceRaw === "singer"
+        ? serviceReferenceRaw
+        : null;
+    const childIds = sceneId ? (state.document.links[sceneId] ?? []) : [];
+    const stageIdRaw = sceneUserData.rhema_stage_node_id;
+    const explicitStageId = typeof stageIdRaw === "string" ? stageIdRaw : null;
+    const explicitStageNode = explicitStageId
+      ? state.document.nodes[explicitStageId]
+      : undefined;
+    const stageId =
+      (explicitStageId &&
+      childIds.includes(explicitStageId) &&
+      isRhemaStageCandidate(explicitStageNode)
+        ? explicitStageId
+        : null) ??
+      childIds.find((id) => {
+        return isRhemaStageCandidate(state.document.nodes[id]);
+      }) ??
+      null;
+
+    const textLayerOptions: { id: string; name: string }[] = [];
+    if (sceneId) {
+      const queue = [...childIds];
+      while (queue.length > 0) {
+        const nodeId = queue.shift()!;
+        const node = state.document.nodes[nodeId];
+        if (!node) continue;
+        if (node.type === "tspan") {
+          textLayerOptions.push({
+            id: nodeId,
+            name: node.name?.trim() || `Text ${textLayerOptions.length + 1}`,
+          });
+        }
+        const children = state.document.links[nodeId] ?? [];
+        if (children.length) queue.push(...children);
+      }
+    }
+
+    const scriptureBindingRaw = sceneUserData[RHEMA_SCRIPTURE_BINDING_KEY];
+    const scriptureBindingNodeId =
+      typeof scriptureBindingRaw === "string" &&
+      textLayerOptions.some((opt) => opt.id === scriptureBindingRaw)
+        ? scriptureBindingRaw
+        : null;
+
+    const referenceBindingRaw = sceneUserData[RHEMA_REFERENCE_BINDING_KEY];
+    const referenceBindingNodeId =
+      typeof referenceBindingRaw === "string" &&
+      textLayerOptions.some((opt) => opt.id === referenceBindingRaw)
+        ? referenceBindingRaw
+        : null;
+
+    const includeVersionRaw =
+      sceneUserData[RHEMA_REFERENCE_INCLUDE_VERSION_KEY];
+    const includeVersionInReference =
+      typeof includeVersionRaw === "boolean" ? includeVersionRaw : true;
+
+    return {
+      activeSceneId: sceneId ?? null,
+      scenesCount: state.document.scenes_ref.length,
+      serviceReference,
+      stageId,
+      textLayerOptions,
+      scriptureBindingNodeId,
+      referenceBindingNodeId,
+      includeVersionInReference,
+    };
+  });
+
+  const setBibleLayerBinding = useCallback(
+    (type: "scripture" | "reference", nodeId: string | null) => {
+      if (!isBibleHelper || !activeSceneId) return;
+      const current = (editor.getUserData(activeSceneId) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const nextScripture =
+        type === "scripture" ? nodeId : scriptureBindingNodeId;
+      const nextReference =
+        type === "reference" ? nodeId : referenceBindingNodeId;
+
+      if (nextScripture && nextReference && nextScripture === nextReference) {
+        toast.error(
+          "Scripture and Reference must map to different text layers."
+        );
+        return;
+      }
+
+      editor.setUserData(activeSceneId, {
+        ...current,
+        [RHEMA_SCRIPTURE_BINDING_KEY]: nextScripture,
+        [RHEMA_REFERENCE_BINDING_KEY]: nextReference,
+      });
+    },
+    [
+      activeSceneId,
+      editor,
+      isBibleHelper,
+      referenceBindingNodeId,
+      scriptureBindingNodeId,
+    ]
+  );
+
+  const setIncludeVersionInReference = useCallback(
+    (enabled: boolean) => {
+      if (!isBibleHelper || !activeSceneId) return;
+      const current = (editor.getUserData(activeSceneId) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      editor.setUserData(activeSceneId, {
+        ...current,
+        [RHEMA_REFERENCE_INCLUDE_VERSION_KEY]: enabled,
+      });
+    },
+    [activeSceneId, editor, isBibleHelper]
+  );
+
+  const exportRhemaJson = useCallback(() => {
+    if (!isBibleHelper || !activeSceneId) return;
+    const payload = buildRhemaThemeRuntimeJson(
+      editor.state.document,
+      activeSceneId
+    );
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const sceneName = (payload.scene.name || "theme")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    saveAs(blob, `${sceneName || "theme"}.rhema.json`);
+  }, [activeSceneId, editor.state.document, isBibleHelper]);
+
+  const setServiceReference = useCallback(
+    async (mode: "preacher" | "singer" | null) => {
+      if (!isBibleHelper || !activeSceneId) return;
+      const current = (editor.getUserData(activeSceneId) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const sceneChildren = editor.state.document.links[activeSceneId] ?? [];
+      const sceneNode = editor.state.document.nodes[activeSceneId];
+      const stageIdFromUserData =
+        typeof current.rhema_stage_node_id === "string"
+          ? current.rhema_stage_node_id
+          : null;
+      const stageNodeFromUserData = stageIdFromUserData
+        ? editor.state.document.nodes[stageIdFromUserData]
+        : undefined;
+      let resolvedStageId =
+        (stageIdFromUserData &&
+        sceneChildren.includes(stageIdFromUserData) &&
+        isRhemaStageCandidate(stageNodeFromUserData)
+          ? stageIdFromUserData
+          : null) ??
+        (stageId &&
+        sceneChildren.includes(stageId) &&
+        isRhemaStageCandidate(editor.state.document.nodes[stageId])
+          ? stageId
+          : null) ??
+        sceneChildren.find((id) =>
+          isRhemaStageCandidate(editor.state.document.nodes[id])
+        ) ??
+        null;
+      if (
+        !resolvedStageId &&
+        sceneNode &&
+        sceneNode.type === "scene" &&
+        (sceneNode.name.startsWith("Theme ") ||
+          current.rhema_profile === "bible-helper")
+      ) {
+        const inserted = editor.insert(
+          { prototype: createRhemaStagePrototype() },
+          null
+        );
+        const createdStageId = inserted[0];
+        if (createdStageId) {
+          resolvedStageId = createdStageId;
+          editor.setUserData(activeSceneId, {
+            ...current,
+            rhema_profile: "bible-helper",
+            rhema_lock_to_stage: true,
+            rhema_stage_node_id: createdStageId,
+          });
+        }
+      }
+      const existingPreviewNodeId =
+        typeof current[RHEMA_SERVICE_REFERENCE_NODE_KEY] === "string"
+          ? (current[RHEMA_SERVICE_REFERENCE_NODE_KEY] as string)
+          : null;
+
+      if (existingPreviewNodeId) {
+        const hasExistingNode =
+          editor.state.document.nodes[existingPreviewNodeId];
+        if (hasExistingNode) {
+          editor.commands.delete([existingPreviewNodeId]);
+        }
+      }
+
+      if (!mode || !resolvedStageId) {
+        if (mode && !resolvedStageId) {
+          toast.error("Stage not found in current theme");
+        }
+        editor.setUserData(activeSceneId, {
+          ...current,
+          [RHEMA_SERVICE_REFERENCE_KEY]: mode,
+          [RHEMA_SERVICE_REFERENCE_NODE_KEY]: null,
+        });
+        return;
+      }
+
+      let imageRef: Readonly<grida.program.document.ImageRef>;
+      try {
+        imageRef = await editor.createImageAsync(
+          RHEMA_SERVICE_REFERENCE_IMAGES[mode]
+        );
+      } catch (error) {
+        toast.error("Failed to load service reference image");
+        console.error("Failed to load service reference image", error);
+        editor.setUserData(activeSceneId, {
+          ...current,
+          [RHEMA_SERVICE_REFERENCE_KEY]: null,
+          [RHEMA_SERVICE_REFERENCE_NODE_KEY]: null,
+        });
+        return;
+      }
+      const stageNode = editor.state.document.nodes[resolvedStageId];
+      if (!stageNode || stageNode.type !== "container") {
+        editor.setUserData(activeSceneId, {
+          ...current,
+          [RHEMA_SERVICE_REFERENCE_KEY]: mode,
+          [RHEMA_SERVICE_REFERENCE_NODE_KEY]: null,
+        });
+        return;
+      }
+
+      const stageWidth =
+        typeof stageNode.layout_target_width === "number"
+          ? stageNode.layout_target_width
+          : RHEMA_STAGE_WIDTH;
+      const stageHeight =
+        typeof stageNode.layout_target_height === "number"
+          ? stageNode.layout_target_height
+          : RHEMA_STAGE_HEIGHT;
+      const stageRect = editor.getNodeAbsoluteBoundingRect(resolvedStageId);
+      const stageX =
+        stageRect?.x ??
+        (typeof stageNode.layout_inset_left === "number"
+          ? stageNode.layout_inset_left
+          : 0);
+      const stageY =
+        stageRect?.y ??
+        (typeof stageNode.layout_inset_top === "number"
+          ? stageNode.layout_inset_top
+          : 0);
+      const inserted = editor.insert(
+        {
+          prototype: {
+            type: "rectangle",
+            name: `${mode}-placeholder`,
+            locked: true,
+            layout_positioning: "absolute",
+            layout_inset_left: Math.round(stageX),
+            layout_inset_top: Math.round(stageY),
+            layout_target_width: stageWidth,
+            layout_target_height: stageHeight,
+            fill: {
+              type: "solid",
+              color: kolor.colorformats.RGBA32F.fromHEX("#00000000"),
+              active: false,
+            },
+            fill_paints: [
+              {
+                type: "image",
+                src: imageRef.url,
+                fit: "cover",
+                transform: cmath.transform.identity,
+                filters: cg.def.IMAGE_FILTERS,
+                blend_mode: cg.def.BLENDMODE,
+                opacity: 0.75,
+                active: true,
+              } satisfies cg.ImagePaint,
+            ],
+          },
+        },
+        null
+      );
+      const previewNodeId = inserted[0] ?? null;
+      if (previewNodeId) {
+        editor.commands.changeNodePropertyPositioning(previewNodeId, {
+          layout_positioning: "absolute",
+          layout_inset_left: Math.round(stageX),
+          layout_inset_top: Math.round(stageY),
+        });
+        editor.commands.changeNodeSize(previewNodeId, "width", stageWidth);
+        editor.commands.changeNodeSize(previewNodeId, "height", stageHeight);
+        editor.commands.order([previewNodeId], "back");
+      }
+
+      editor.setUserData(activeSceneId, {
+        ...current,
+        [RHEMA_SERVICE_REFERENCE_KEY]: mode,
+        [RHEMA_SERVICE_REFERENCE_NODE_KEY]: previewNodeId,
+      });
+    },
+    [activeSceneId, editor, isBibleHelper, stageId]
+  );
+  const onCreateTheme = useCallback(() => {
+    if (!isBibleHelper) {
+      editor.surface.surfaceCreateScene();
+      return;
+    }
+
+    const previousActiveSceneId = activeSceneId;
+    const newSceneId = `theme-${v4()}`;
+    editor.surface.surfaceCreateScene({
+      id: newSceneId,
+      name: `Theme ${scenesCount + 1}`,
+      background_color: RHEMA_SCENE_BACKGROUND,
+    });
+
+    const inserted = editor.commands.insert(
+      {
+        prototype: createRhemaStagePrototype(),
+      },
+      null
+    );
+    const stageId = inserted[0];
+    const sceneUserData = (editor.getUserData(newSceneId) ?? {}) as Record<
+      string,
+      unknown
+    >;
+    editor.setUserData(newSceneId, {
+      ...sceneUserData,
+      rhema_profile: "bible-helper",
+      rhema_lock_to_stage: true,
+      rhema_stage_node_id: stageId,
+    });
+
+    // Keep the user's current active theme when creating a new one.
+    if (previousActiveSceneId) {
+      editor.commands.loadScene(previousActiveSceneId);
+    }
+  }, [activeSceneId, editor, isBibleHelper, scenesCount]);
+
   return (
     <aside className="relative">
-      <div className="absolute top-4 -right-14 z-50">
-        <Tooltip>
-          <FloatingWindowTrigger
-            windowId="library"
-            controls={libraryWindowControls}
-            asChild
-          >
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                className="size-8 rounded-full p-0"
-                aria-label="Open Library"
-              >
-                <PlusIcon className="size-4" aria-hidden />
-              </Button>
-            </TooltipTrigger>
-          </FloatingWindowTrigger>
-          <TooltipContent side="right" sideOffset={8}>
-            <div className="flex items-center gap-2">
-              <span>Open Library</span>
-              <KbdGroup>
-                <Kbd>{uikbdk(M.Shift)}</Kbd>
-                <Kbd>{uikbdk(KeyCode.KeyI)}</Kbd>
-              </KbdGroup>
-            </div>
-          </TooltipContent>
-        </Tooltip>
-      </div>
+      {showLibrary && (
+        <div className="absolute top-4 -right-14 z-50">
+          <Tooltip>
+            <FloatingWindowTrigger
+              windowId="library"
+              controls={libraryWindowControls}
+              asChild
+            >
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="size-8 rounded-full p-0"
+                  aria-label="Open Library"
+                >
+                  <PlusIcon className="size-4" aria-hidden />
+                </Button>
+              </TooltipTrigger>
+            </FloatingWindowTrigger>
+            <TooltipContent side="right" sideOffset={8}>
+              <div className="flex items-center gap-2">
+                <span>Open Library</span>
+                <KbdGroup>
+                  <Kbd>{uikbdk(M.Shift)}</Kbd>
+                  <Kbd>{uikbdk(KeyCode.KeyI)}</Kbd>
+                </KbdGroup>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      )}
       <Sidebar>
         <SidebarHeader className="p-0">
           <DarwinSidebarHeaderDragArea />
           <header className="h-11 min-h-11 flex items-center px-4 border-b">
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger className="me-2">
-                <GridaLogo className="inline-block size-4" />
-              </DropdownMenuTrigger>
-              <PlaygroundMenuContent
-                toggleVisibility={toggleVisibility}
-                toggleMinimal={toggleMinimal}
-              />
-            </DropdownMenu>
+            {!isBibleHelper && (
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger className="me-2">
+                  <GridaLogo className="inline-block size-4" />
+                </DropdownMenuTrigger>
+                <PlaygroundMenuContent
+                  toggleVisibility={toggleVisibility}
+                  toggleMinimal={toggleMinimal}
+                />
+              </DropdownMenu>
+            )}
             <span className="font-bold text-xs">
-              Canvas
-              <Badge variant="outline" className="ms-2 text-xs">
-                BETA
-              </Badge>
+              {isBibleHelper ? "Rhema" : "Canvas"}
+              {!isBibleHelper && (
+                <Badge variant="outline" className="ms-2 text-xs">
+                  BETA
+                </Badge>
+              )}
             </span>
           </header>
         </SidebarHeader>
-        <SidebarContent className="p-0 overflow-hidden">
-          <DocumentHierarchy />
+        <SidebarContent className="p-0 overflow-hidden flex flex-col">
+          <div className="flex-1 min-h-0">
+            <DocumentHierarchy
+              sceneLabel={isBibleHelper ? "Themes" : "Scenes"}
+              newSceneLabel={isBibleHelper ? "New Theme" : "New Scene"}
+              onCreateScene={onCreateTheme}
+            />
+          </div>
+          {isBibleHelper && (
+            <div className="px-3 py-2 border-t">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">
+                  Service Reference
+                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center text-muted-foreground hover:text-foreground"
+                      aria-label="Service reference information"
+                    >
+                      <InfoCircledIcon className="size-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="right"
+                    sideOffset={8}
+                    className="max-w-72"
+                  >
+                    Use these toggles to preview your theme in a live service
+                    scene. These references are preview-only and never included
+                    in exported themes.
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <div className="mt-2 space-y-2">
+                <label className="flex items-center justify-between text-xs">
+                  <span>Preacher</span>
+                  <Switch
+                    checked={serviceReference === "preacher"}
+                    onCheckedChange={(checked) =>
+                      setServiceReference(checked ? "preacher" : null)
+                    }
+                  />
+                </label>
+                <label className="flex items-center justify-between text-xs">
+                  <span>Singer</span>
+                  <Switch
+                    checked={serviceReference === "singer"}
+                    onCheckedChange={(checked) =>
+                      setServiceReference(checked ? "singer" : null)
+                    }
+                  />
+                </label>
+              </div>
+            </div>
+          )}
+          {isBibleHelper && (
+            <div className="px-3 py-2 border-t">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">
+                  Bible Mapping
+                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center text-muted-foreground hover:text-foreground"
+                      aria-label="Bible mapping information"
+                    >
+                      <InfoCircledIcon className="size-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="right"
+                    sideOffset={8}
+                    className="max-w-72"
+                  >
+                    Pick which text layers receive Scripture and Reference when
+                    rendering from your app.
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <div className="mt-2 space-y-2">
+                <label className="flex flex-col gap-1 text-xs">
+                  <span>Scripture Layer</span>
+                  <select
+                    className="h-7 rounded border bg-background px-2 text-xs"
+                    value={scriptureBindingNodeId ?? ""}
+                    onChange={(e) =>
+                      setBibleLayerBinding(
+                        "scripture",
+                        e.currentTarget.value || null
+                      )
+                    }
+                  >
+                    <option value="">Not mapped</option>
+                    {textLayerOptions.map((opt) => (
+                      <option key={opt.id} value={opt.id}>
+                        {opt.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs">
+                  <span>Reference Layer</span>
+                  <select
+                    className="h-7 rounded border bg-background px-2 text-xs"
+                    value={referenceBindingNodeId ?? ""}
+                    onChange={(e) =>
+                      setBibleLayerBinding(
+                        "reference",
+                        e.currentTarget.value || null
+                      )
+                    }
+                  >
+                    <option value="">Not mapped</option>
+                    {textLayerOptions.map((opt) => (
+                      <option key={opt.id} value={opt.id}>
+                        {opt.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center justify-between text-xs">
+                  <span>Show Version In Ref</span>
+                  <Switch
+                    checked={includeVersionInReference}
+                    onCheckedChange={setIncludeVersionInReference}
+                  />
+                </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-7 w-full text-xs"
+                  onClick={exportRhemaJson}
+                >
+                  Export Rhema JSON
+                </Button>
+              </div>
+            </div>
+          )}
         </SidebarContent>
       </Sidebar>
     </aside>
@@ -998,12 +1816,15 @@ function SidebarRight({
   variant = "sidebar",
   tab,
   setTab,
+  isBibleHelper = false,
 }: {
   variant?: "sidebar" | "floating";
   tab: "inspect" | "agent";
   setTab: (tab: "inspect" | "agent") => void;
+  isBibleHelper?: boolean;
 }) {
   const should_show_artboards_list = useArtboardListCondition();
+  const show_artboards = !isBibleHelper && should_show_artboards_list;
   const AGENT_PANEL_WIDTH = "540px";
 
   return (
@@ -1013,7 +1834,11 @@ function SidebarRight({
       className="relative data-[variant=floating]:absolute data-[variant=floating]:right-0"
       style={
         {
-          "--sidebar-width": tab === "inspect" ? "240px" : AGENT_PANEL_WIDTH,
+          "--sidebar-width": isBibleHelper
+            ? "240px"
+            : tab === "inspect"
+              ? "240px"
+              : AGENT_PANEL_WIDTH,
         } as React.CSSProperties
       }
     >
@@ -1029,7 +1854,7 @@ function SidebarRight({
         <SidebarHeader className="p-0 gap-0">
           <header className="flex h-11 px-2 justify-between items-center gap-2">
             <div className="flex-1">
-              <PresenseAvatars />
+              {!isBibleHelper && <PresenseAvatars />}
             </div>
             <div className="flex items-center">
               <Zoom
@@ -1041,25 +1866,27 @@ function SidebarRight({
                   "w-auto"
                 )}
               />
-              <PreviewButton />
+              {!isBibleHelper && <PreviewButton />}
             </div>
           </header>
-          <Tabs
-            value={tab}
-            onValueChange={(v) => setTab(v as "inspect" | "agent")}
-          >
-            <SidebarTabsList className="h-auto bg-transparent px-2 pb-2">
-              <SidebarTabsTrigger value="inspect" size="xs">
-                Inspect
-              </SidebarTabsTrigger>
-              <SidebarTabsTrigger value="agent" size="xs">
-                Agent
-              </SidebarTabsTrigger>
-            </SidebarTabsList>
-          </Tabs>
+          {!isBibleHelper && (
+            <Tabs
+              value={tab}
+              onValueChange={(v) => setTab(v as "inspect" | "agent")}
+            >
+              <SidebarTabsList className="h-auto bg-transparent px-2 pb-2">
+                <SidebarTabsTrigger value="inspect" size="xs">
+                  Inspect
+                </SidebarTabsTrigger>
+                <SidebarTabsTrigger value="agent" size="xs">
+                  Agent
+                </SidebarTabsTrigger>
+              </SidebarTabsList>
+            </Tabs>
+          )}
         </SidebarHeader>
         <hr />
-        {should_show_artboards_list ? (
+        {show_artboards ? (
           <>
             <DialogPrimitive.Root open>
               <DialogPrimitive.Content className="h-full">
@@ -1076,27 +1903,45 @@ function SidebarRight({
             </DialogPrimitive.Root>
           </>
         ) : (
-          <SidebarContent
-            className={cn("gap-0", tab === "agent" && "overflow-hidden")}
-          >
-            <Tabs
-              value={tab}
-              className={cn(tab === "agent" && "flex flex-col h-full")}
-            >
-              <SidebarTabsContent value="inspect">
+          <>
+            {isBibleHelper ? (
+              <SidebarContent className="gap-0">
                 <Selection
+                  config={{
+                    position: "off",
+                    developer: "off",
+                  }}
                   empty={
                     <div className="mt-4 mb-10">
                       <DocumentProperties />
                     </div>
                   }
                 />
-              </SidebarTabsContent>
-              <SidebarTabsContent value="agent" className="min-h-0">
-                <AgentPanel className="h-full flex-1 min-h-0" />
-              </SidebarTabsContent>
-            </Tabs>
-          </SidebarContent>
+              </SidebarContent>
+            ) : (
+              <SidebarContent
+                className={cn("gap-0", tab === "agent" && "overflow-hidden")}
+              >
+                <Tabs
+                  value={tab}
+                  className={cn(tab === "agent" && "flex flex-col h-full")}
+                >
+                  <SidebarTabsContent value="inspect">
+                    <Selection
+                      empty={
+                        <div className="mt-4 mb-10">
+                          <DocumentProperties />
+                        </div>
+                      }
+                    />
+                  </SidebarTabsContent>
+                  <SidebarTabsContent value="agent" className="min-h-0">
+                    <AgentPanel className="h-full flex-1 min-h-0" />
+                  </SidebarTabsContent>
+                </Tabs>
+              </SidebarContent>
+            )}
+          </>
         )}
       </Sidebar>
     </aside>

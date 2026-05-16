@@ -46,6 +46,24 @@ import { snapGuideTranslation, threshold } from "./tools/snap";
 import cmath from "@grida/cmath";
 import type { ReducerContext } from ".";
 
+function __is_rhema_scene(state: editor.state.IEditorState): boolean {
+  const scene_id = state.scene_id;
+  if (!scene_id) return false;
+  const sceneMeta = state.document.metadata?.[scene_id];
+  const userdata = sceneMeta?.userdata as Record<string, unknown> | undefined;
+  return userdata?.rhema_profile === "bible-helper";
+}
+
+function __get_rhema_stage_id(state: editor.state.IEditorState): string | null {
+  const scene_id = state.scene_id;
+  if (!scene_id) return null;
+  const sceneMeta = state.document.metadata?.[scene_id];
+  const userdata = sceneMeta?.userdata as Record<string, unknown> | undefined;
+  if (userdata?.rhema_profile !== "bible-helper") return null;
+  const stageId = userdata?.rhema_stage_node_id;
+  return typeof stageId === "string" ? stageId : null;
+}
+
 function __self_evt_on_pointer_move(
   draft: editor.state.IEditorState,
   action: EditorEventTarget_PointerMove,
@@ -149,6 +167,9 @@ function __self_evt_on_click(
         {},
         context.paint_constraints
       );
+      if (nnode.type === "tspan" && __is_rhema_scene(draft)) {
+        nnode.font_size = 48;
+      }
 
       let relpos: cmath.Vector2;
       if (parent) {
@@ -480,6 +501,9 @@ function __self_evt_on_drag_start(
         },
         context.paint_constraints
       );
+      if (nnode.type === "tspan" && __is_rhema_scene(draft)) {
+        nnode.font_size = 48;
+      }
 
       let pending: {
         node_id: string;
@@ -1277,6 +1301,10 @@ function __get_insertion_target(
   state: editor.state.IEditorState
 ): string | null {
   assert(state.scene_id, "scene_id is not set");
+
+  const rhemaStageId = __get_rhema_stage_id(state);
+  if (rhemaStageId) return rhemaStageId;
+
   const scene = state.document.nodes[
     state.scene_id
   ] as grida.program.nodes.SceneNode;

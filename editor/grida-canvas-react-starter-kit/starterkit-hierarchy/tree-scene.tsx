@@ -243,15 +243,25 @@ export function ScenesList() {
                   item.startRenaming();
                 }}
               >
-                <NameInput
-                  isRenaming={isRenaming}
-                  initialValue={scene.name}
-                  onValueCommit={(name) => {
-                    editor.commands.renameScene(scene.id, name);
-                    tree.abortRenaming();
-                  }}
-                  className="px-1 py-0.5 text-[11px] font-normal"
-                />
+                {isRenaming ? (
+                  <NameInput
+                    isRenaming={isRenaming}
+                    initialValue={scene.name}
+                    onValueCommit={(name) => {
+                      editor.commands.renameScene(scene.id, name);
+                      tree.abortRenaming();
+                    }}
+                    className="px-1 py-0.5 text-[11px] font-normal"
+                  />
+                ) : (
+                  <div className="flex items-center min-w-0 w-full px-1 py-0.5">
+                    <NameInput
+                      isRenaming={false}
+                      initialValue={scene.name}
+                      className="text-[11px] font-normal min-w-0 flex-1"
+                    />
+                  </div>
+                )}
               </TreeItemLabel>
             </TreeItem>
           </SceneItemContextMenuWrapper>

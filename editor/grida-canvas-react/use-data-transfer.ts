@@ -13,6 +13,12 @@ import { iofigma } from "@grida/io-figma";
 import { nanoid } from "nanoid";
 import { datatransfer } from "@/grida-canvas/data-transfer";
 import type { editor } from "@/grida-canvas";
+import grida from "@grida/schema";
+
+const RHEMA_STAGE_NAME = "Canvas 1920x1080";
+const RHEMA_STAGE_WIDTH = 1920;
+const RHEMA_STAGE_HEIGHT = 1080;
+const RHEMA_TRANSPARENT = kolor.colorformats.RGBA32F.fromHEX("#00000000");
 
 /**
  * Hook that provides file insertion utilities for the Grida canvas editor.
@@ -45,6 +51,126 @@ import type { editor } from "@/grida-canvas";
 export function useInsertFile() {
   const instance = useCurrentEditor();
 
+  const createRhemaStagePrototype =
+    useCallback((): grida.program.nodes.ContainerNodePrototype => {
+      return {
+        type: "container",
+        name: RHEMA_STAGE_NAME,
+        children: [],
+        layout_positioning: "absolute",
+        layout_inset_left: 0,
+        layout_inset_top: 0,
+        layout_target_width: RHEMA_STAGE_WIDTH,
+        layout_target_height: RHEMA_STAGE_HEIGHT,
+        clips_content: true,
+        fill: {
+          type: "solid",
+          color: RHEMA_TRANSPARENT,
+          active: true,
+        },
+        stroke_width: 1,
+        stroke_align: "inside",
+      };
+    }, []);
+
+  const isRhemaStageCandidate = useCallback(
+    (
+      node: grida.program.nodes.Node | undefined
+    ): node is grida.program.nodes.ContainerNode => {
+      if (!node || node.type !== "container") return false;
+      return (
+        node.name === RHEMA_STAGE_NAME ||
+        (typeof node.layout_target_width === "number" &&
+          typeof node.layout_target_height === "number" &&
+          node.layout_target_width >= 1280 &&
+          node.layout_target_height >= 720)
+      );
+    },
+    []
+  );
+
+  const getRhemaStage = useCallback(
+    (createIfMissing = false) => {
+      const scene_id = instance.state.scene_id;
+      if (!scene_id) return null;
+      const sceneNode = instance.state.document.nodes[scene_id];
+      if (!sceneNode || sceneNode.type !== "scene") return null;
+      const sceneUserData = instance.state.document.metadata?.[scene_id]
+        ?.userdata as Record<string, unknown> | undefined;
+      const sceneLooksRhema =
+        sceneUserData?.rhema_profile === "bible-helper" ||
+        sceneNode.name.startsWith("Theme ");
+      const sceneChildren = instance.state.document.links[scene_id] ?? [];
+      const explicitStageId =
+        typeof sceneUserData?.rhema_stage_node_id === "string"
+          ? sceneUserData.rhema_stage_node_id
+          : null;
+      const explicitStageNode = explicitStageId
+        ? instance.state.document.nodes[explicitStageId]
+        : undefined;
+      const explicitValidStageId =
+        explicitStageId &&
+        sceneChildren.includes(explicitStageId) &&
+        isRhemaStageCandidate(explicitStageNode)
+          ? explicitStageId
+          : null;
+      let stageId =
+        explicitValidStageId ??
+        sceneChildren.find((id) =>
+          isRhemaStageCandidate(instance.state.document.nodes[id])
+        ) ??
+        null;
+      if (!stageId && createIfMissing && sceneLooksRhema) {
+        const inserted = instance.insert(
+          { prototype: createRhemaStagePrototype() },
+          null
+        );
+        const createdStageId = inserted[0];
+        if (createdStageId) {
+          stageId = createdStageId;
+          instance.setUserData(scene_id, {
+            ...sceneUserData,
+            rhema_profile: "bible-helper",
+            rhema_lock_to_stage: true,
+            rhema_stage_node_id: createdStageId,
+          });
+        }
+      }
+      if (!stageId) return null;
+
+      const stageNode = instance.state.document.nodes[stageId];
+      if (!isRhemaStageCandidate(stageNode)) return null;
+
+      const stageWidth =
+        typeof stageNode.layout_target_width === "number"
+          ? stageNode.layout_target_width
+          : null;
+      const stageHeight =
+        typeof stageNode.layout_target_height === "number"
+          ? stageNode.layout_target_height
+          : null;
+      if (!stageWidth || !stageHeight) return null;
+      // Use document-space layout coordinates for insertion.
+      // Geometry bounds can be viewport/camera-space depending on backend.
+      const stageX =
+        typeof stageNode.layout_inset_left === "number"
+          ? stageNode.layout_inset_left
+          : 0;
+      const stageY =
+        typeof stageNode.layout_inset_top === "number"
+          ? stageNode.layout_inset_top
+          : 0;
+      return {
+        stageId,
+        x: stageX,
+        y: stageY,
+        width: stageWidth,
+        height: stageHeight,
+      };
+    },
+    [createRhemaStagePrototype, instance, isRhemaStageCandidate]
+  );
+
   const insertImage = useCallback(
     async (
       name: string,
@@ -54,35 +180,82 @@ export function useInsertFile() {
         clientY: number;
       }
     ) => {
-      const [x, y] = instance.camera.clientPointToCanvasPoint(
-        position ? [position.clientX, position.clientY] : [0, 0]
+      const defaultClientX = window.innerWidth / 2;
+      const defaultClientY = window.innerHeight / 2;
+      const [pointerX, pointerY] = instance.camera.clientPointToCanvasPoint(
+        position
+          ? [position.clientX, position.clientY]
+          : [defaultClientX, defaultClientY]
       );
 
       const bytes = await file.arrayBuffer();
       const image = await instance.createImage(new Uint8Array(bytes));
 
-      // Create rectangle node with image paint instead of image node
-      const node = instance.commands.createRectangleNode();
-      node.$.layout_positioning = "absolute";
-      node.$.name = name;
-      node.$.layout_inset_left = x;
-      node.$.layout_inset_top = y;
-      node.$.layout_target_width = image.width;
-      node.$.layout_target_height = image.height;
-      node.$.fill_paints = [
+      const stage = getRhemaStage(true);
+      const maxWidth = stage ? stage.width : image.width;
+      const maxHeight = stage ? stage.height : image.height;
+      const scale = Math.min(
+        1,
+        maxWidth / image.width,
+        maxHeight / image.height
+      );
+      const width = Math.max(1, Math.round(image.width * scale));
+      const height = Math.max(1, Math.round(image.height * scale));
+
+      let insetLeft = pointerX - width / 2;
+      let insetTop = pointerY - height / 2;
+      if (stage) {
+        // For Rhema scenes, always spawn media centered in the stage.
+        // This avoids client/surface coordinate drift between backends.
+        insetLeft = Math.round(stage.x + (stage.width - width) / 2);
+        insetTop = Math.round(stage.y + (stage.height - height) / 2);
+      }
+
+      const inserted = instance.insert(
         {
-          type: "image",
-          src: image.url,
-          fit: "cover",
-          transform: cmath.transform.identity,
-          filters: cg.def.IMAGE_FILTERS,
-          blend_mode: cg.def.BLENDMODE,
-          opacity: 1,
-          active: true,
-        } satisfies cg.ImagePaint,
-      ];
+          prototype: {
+            type: "rectangle",
+            name,
+            layout_positioning: "absolute",
+            layout_inset_left: Math.round(insetLeft),
+            layout_inset_top: Math.round(insetTop),
+            layout_target_width: width,
+            layout_target_height: height,
+            fill: {
+              type: "solid",
+              color: RHEMA_TRANSPARENT,
+              active: false,
+            },
+            fill_paints: [
+              {
+                type: "image",
+                src: image.url,
+                fit: "cover",
+                transform: cmath.transform.identity,
+                filters: cg.def.IMAGE_FILTERS,
+                blend_mode: cg.def.BLENDMODE,
+                opacity: 1,
+                active: true,
+              } satisfies cg.ImagePaint,
+            ],
+          },
+        },
+        null
+      );
+      const nodeId = inserted[0];
+      if (nodeId) {
+        instance.commands.changeNodePropertyPositioning(nodeId, {
+          layout_positioning: "absolute",
+          layout_inset_left: Math.round(insetLeft),
+          layout_inset_top: Math.round(insetTop),
+        });
+        instance.commands.changeNodeSize(nodeId, "width", width);
+        instance.commands.changeNodeSize(nodeId, "height", height);
+      }
+
+      return nodeId ? [nodeId] : [];
     },
-    [instance]
+    [getRhemaStage, instance]
   );
 
   const insertSVG = useCallback(
@@ -300,7 +473,7 @@ async function tryInsertFromFigmaClipboardPayload(
 export function useDataTransferEventTarget() {
   const instance = useCurrentEditor();
   const current_clipboard = useEditorState(instance, (s) => s.user_clipboard);
-  const { insertFromFile, insertSVG } = useInsertFile();
+  const { insertFromFile, insertSVG, insertImage } = useInsertFile();
 
   const insertText = useCallback(
     (
@@ -592,32 +765,14 @@ export function useDataTransferEventTarget() {
             });
             break;
           case "image": {
-            const { name, src, width, height } = data;
+            const { name, src } = data;
             const task = (async () => {
-              const imageRef = await instance.createImageAsync(src);
-              const [x, y] = instance.camera.clientPointToCanvasPoint([
-                event.clientX,
-                event.clientY,
-              ]);
-              const node = instance.commands.createRectangleNode();
-              node.$.layout_positioning = "absolute";
-              node.$.name = name || "Photo";
-              node.$.layout_inset_left = x;
-              node.$.layout_inset_top = y;
-              node.$.layout_target_width = width || imageRef.width;
-              node.$.layout_target_height = height || imageRef.height;
-              node.$.fill_paints = [
-                {
-                  type: "image",
-                  src: imageRef.url,
-                  fit: "cover",
-                  transform: cmath.transform.identity,
-                  filters: cg.def.IMAGE_FILTERS,
-                  blend_mode: cg.def.BLENDMODE,
-                  opacity: 1,
-                  active: true,
-                } satisfies cg.ImagePaint,
-              ];
+              const res = await fetch(src, { cache: "no-store" });
+              const blob = await res.blob();
+              const file = new File([blob], `${name || "Photo"}.png`, {
+                type: blob.type || "image/png",
+              });
+              await insertImage(name || "Photo", file, event);
             })();
 
             toast.promise(task, {
@@ -664,7 +819,7 @@ export function useDataTransferEventTarget() {
         }
       }
     },
-    [insertFromFile, insertSVG]
+    [insertFromFile, insertImage, insertSVG]
   );
   //
 
