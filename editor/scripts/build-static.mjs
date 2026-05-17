@@ -370,8 +370,12 @@ if (process.argv.includes("--recover")) {
   const unresolved = [];
 
   // Step 1: restore content-mutated files from persisted disk snapshots.
-  // The snapshot index maps original-path → backup-filename. We restore the
-  // original contents from each .bak and remove the snapshot dir at the end.
+  // The snapshot index maps original-path → backup-filename. We restore each
+  // listed entry, then cross-check on-disk .bak files against the index to
+  // catch the SIGKILL-between-bak-write-and-index-rename race: a .bak file
+  // can exist on disk without being referenced (orphan); we must NOT delete
+  // the snapshot dir while orphans remain.
+  const indexedBackups = new Set();
   if (existsSync(SNAPSHOT_MAP)) {
     let snapshotIndex;
     try {
@@ -382,6 +386,7 @@ if (process.argv.includes("--recover")) {
       snapshotIndex = {};
     }
     for (const [originalPath, backupName] of Object.entries(snapshotIndex)) {
+      indexedBackups.add(backupName);
       const backupFile = join(SNAPSHOT_DIR, backupName);
       if (!existsSync(backupFile)) {
         console.error(`  missing backup file: ${backupFile} (for ${originalPath})`);
@@ -395,6 +400,22 @@ if (process.argv.includes("--recover")) {
         console.error(`  failed to restore ${originalPath}: ${e.message}`);
         unresolved.push(`content-restore-failed: ${originalPath}`);
       }
+    }
+  }
+  // Step 1b: enumerate .bak files on disk and surface any that aren't in the
+  // index. These are orphans from a crash between bak write and index rename.
+  // We don't auto-restore them (the flatten→path reverse could be ambiguous
+  // if a real source path contained "__"). Operator must restore manually.
+  if (existsSync(SNAPSHOT_DIR)) {
+    for (const entry of readdirSync(SNAPSHOT_DIR)) {
+      if (!entry.endsWith(".bak")) continue;
+      if (indexedBackups.has(entry)) continue;
+      const orphanPath = join(SNAPSHOT_DIR, entry);
+      console.error(`  orphan backup (not in index): ${orphanPath}`);
+      console.error(
+        `    inspect contents and move to the correct location in app/lib/grida-canvas-hosted/ manually.`,
+      );
+      unresolved.push(`orphan-backup: ${orphanPath}`);
     }
   }
 
