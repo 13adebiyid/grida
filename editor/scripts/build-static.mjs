@@ -21,7 +21,13 @@ import { spawnSync } from "node:child_process";
 
 const APP_DIR = "app";
 const PARK_DIR = "_app_excluded";
+const SNAPSHOT_DIR = "_app_excluded/.snapshots";
+const SNAPSHOT_MAP = "_app_excluded/.snapshots/index.json";
 const LOCK = ".build-static.lock";
+
+function flattenPath(rel) {
+  return rel.replace(/[\\/]/g, "__");
+}
 
 const ROUTE_GROUPS = [
   "(api)",
@@ -190,7 +196,23 @@ export default async function RootLayout({
 `,
 };
 
-const strippedSnapshots = new Map(); // path -> original content
+const strippedSnapshots = new Map(); // path -> original content (in-memory mirror of on-disk snapshots)
+
+// Persist a pre-mutation snapshot to disk so that a SIGKILL/power-loss leaves
+// `--recover` able to reconstruct the working tree. Idempotent: only the FIRST
+// snapshot for a given path is persisted (subsequent strip passes would
+// overwrite with already-mutated content).
+function persistSnapshot(rel, originalContent) {
+  if (strippedSnapshots.has(rel)) return;
+  strippedSnapshots.set(rel, originalContent);
+  mkdirSync(SNAPSHOT_DIR, { recursive: true });
+  const flat = flattenPath(rel);
+  writeFileSync(join(SNAPSHOT_DIR, `${flat}.bak`), originalContent);
+  const currentMap = Object.fromEntries(
+    Array.from(strippedSnapshots.keys()).map((k) => [k, `${flattenPath(k)}.bak`]),
+  );
+  writeFileSync(SNAPSHOT_MAP, JSON.stringify(currentMap, null, 2));
+}
 
 // Sanitize a relative app-path into a flat filename safe for PARK_DIR.
 // Avoids nested mkdir requirements (parens, slashes flattened with `__`).
@@ -264,7 +286,7 @@ function park() {
   for (const rel of STRIP_USE_SERVER_FILES) {
     if (!existsSync(rel)) continue;
     const original = readFileSync(rel, "utf8");
-    if (!strippedSnapshots.has(rel)) strippedSnapshots.set(rel, original);
+    persistSnapshot(rel, original);
     // Replace top-of-file "use server" with a comment so the file becomes a
     // regular module. Match either single or double quotes, with or without
     // semicolon, optionally indented or preceded by whitespace/newlines.
@@ -277,9 +299,9 @@ function park() {
   for (const rel of STRIP_SERVER_ONLY_FILES) {
     if (!existsSync(rel)) continue;
     const original = readFileSync(rel, "utf8");
-    if (!strippedSnapshots.has(rel)) strippedSnapshots.set(rel, original);
+    persistSnapshot(rel, original);
     // Strip `import "server-only";` lines.
-    const stripped = readFileSync(rel, "utf8").replace(
+    const stripped = original.replace(
       /^\s*import\s+["']server-only["'];?\s*$/m,
       "// import 'server-only' — stripped by build-static.mjs for STATIC_EXPORT"
     );
@@ -287,9 +309,7 @@ function park() {
   }
   for (const [rel, replacement] of Object.entries(FILE_SWAPS)) {
     if (!existsSync(rel)) continue;
-    if (!strippedSnapshots.has(rel)) {
-      strippedSnapshots.set(rel, readFileSync(rel, "utf8"));
-    }
+    persistSnapshot(rel, readFileSync(rel, "utf8"));
     writeFileSync(rel, replacement);
   }
 }
@@ -326,11 +346,15 @@ function restore() {
       }
     }
   }
-  // Restore stripped "use server" files.
+  // Restore content-mutated files from in-memory snapshots, then drop the
+  // persisted on-disk backups (no longer needed after successful restore).
   for (const [path, original] of strippedSnapshots) {
     writeFileSync(path, original);
   }
   strippedSnapshots.clear();
+  if (existsSync(SNAPSHOT_DIR)) {
+    rmSync(SNAPSHOT_DIR, { recursive: true, force: true });
+  }
 }
 
 // `--recover` flag: run restore-only logic (best-effort sweep of
@@ -339,8 +363,41 @@ function restore() {
 if (process.argv.includes("--recover")) {
   console.log("Running recovery sweep — restoring any stray parked files...");
   const unresolved = [];
+
+  // Step 1: restore content-mutated files from persisted disk snapshots.
+  // The snapshot index maps original-path → backup-filename. We restore the
+  // original contents from each .bak and remove the snapshot dir at the end.
+  if (existsSync(SNAPSHOT_MAP)) {
+    let snapshotIndex;
+    try {
+      snapshotIndex = JSON.parse(readFileSync(SNAPSHOT_MAP, "utf8"));
+    } catch (e) {
+      console.error(`  snapshot index ${SNAPSHOT_MAP} unreadable: ${e.message}`);
+      unresolved.push(`snapshot-index: ${SNAPSHOT_MAP}`);
+      snapshotIndex = {};
+    }
+    for (const [originalPath, backupName] of Object.entries(snapshotIndex)) {
+      const backupFile = join(SNAPSHOT_DIR, backupName);
+      if (!existsSync(backupFile)) {
+        console.error(`  missing backup file: ${backupFile} (for ${originalPath})`);
+        unresolved.push(`missing-backup: ${originalPath}`);
+        continue;
+      }
+      try {
+        writeFileSync(originalPath, readFileSync(backupFile, "utf8"));
+        console.log(`  restored content: ${originalPath}`);
+      } catch (e) {
+        console.error(`  failed to restore ${originalPath}: ${e.message}`);
+        unresolved.push(`content-restore-failed: ${originalPath}`);
+      }
+    }
+  }
+
+  // Step 2: restore parked directories/files.
   if (existsSync(PARK_DIR)) {
     for (const entry of readdirSync(PARK_DIR)) {
+      // Skip the snapshot directory (already handled above).
+      if (entry === ".snapshots") continue;
       const from = join(PARK_DIR, entry);
       const to = join(APP_DIR, entry);
       // Heuristic: top-level non-flattened entries (no '__') are route groups
@@ -362,6 +419,15 @@ if (process.argv.includes("--recover")) {
       }
     }
   }
+
+  // Step 3: clean up snapshot dir only when all content restores succeeded.
+  if (
+    existsSync(SNAPSHOT_DIR) &&
+    !unresolved.some((u) => u.startsWith("missing-backup") || u.startsWith("content-restore-failed"))
+  ) {
+    rmSync(SNAPSHOT_DIR, { recursive: true, force: true });
+  }
+
   if (existsSync(LOCK)) {
     rmSync(LOCK, { force: true });
     console.log(`  removed stale lock: ${LOCK}`);
