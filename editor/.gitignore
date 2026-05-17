@@ -17,6 +17,10 @@
 /.next/
 /out/
 
+# static-export orchestrator (build-static.mjs)
+/_app_excluded/
+/.build-static.lock
+
 # production
 /build
 

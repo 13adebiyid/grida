@@ -10,6 +10,12 @@ const USE_TELEMETRY =
   process.env.NODE_ENV === "production" &&
   process.env.NEXT_PUBLIC_GRIDA_USE_TELEMETRY === "1";
 
+// STATIC_EXPORT=1: build a static-export bundle of only the editor's bible-helper-base
+// page for vendoring into Bible Helper's ui/public/editor/. Disables every Next.js
+// feature that's incompatible with `output: "export"` — see Path A plan in
+// ~/.claude/plans/lets-continue-from-handoff-unified-donut.md.
+const STATIC_EXPORT = process.env.STATIC_EXPORT === "1";
+
 const withMDX = createMDX({
   // Add markdown plugins here, as desired
 });
@@ -24,32 +30,44 @@ const nextConfig: NextConfig = {
   // Vercel deploy. Next 16 already does not run ESLint during `next build`,
   // so no `eslint:` key is needed.
   typescript: { ignoreBuildErrors: true },
-  images: {
-    dangerouslyAllowLocalIP: process.env.NODE_ENV === "development",
-    remotePatterns: [
-      {
-        protocol: "http",
-        hostname: "127.0.0.1",
+  // STATIC_EXPORT gating: subpath-host the editor at /editor/ with no server
+  // features. NEVER set assetPrefix alongside basePath — would double-prefix.
+  ...(STATIC_EXPORT
+    ? {
+        output: "export" as const,
+        trailingSlash: true,
+        basePath: "/editor",
+      }
+    : {}),
+  images: STATIC_EXPORT
+    ? { unoptimized: true }
+    : {
+        dangerouslyAllowLocalIP: process.env.NODE_ENV === "development",
+        remotePatterns: [
+          {
+            protocol: "http",
+            hostname: "127.0.0.1",
+          },
+          {
+            protocol: "https",
+            hostname: "mozagqllybnbytfcmvdh.supabase.co",
+          },
+          {
+            protocol: "https",
+            hostname: "mozagqllybnbytfcmvdh-all.supabase.co",
+          },
+          {
+            protocol: "https",
+            hostname: "*.grida.co",
+          },
+          {
+            protocol: "https",
+            hostname: "*.unsplash.com",
+          },
+        ],
       },
-      {
-        protocol: "https",
-        hostname: "mozagqllybnbytfcmvdh.supabase.co",
-      },
-      {
-        protocol: "https",
-        hostname: "mozagqllybnbytfcmvdh-all.supabase.co",
-      },
-      {
-        protocol: "https",
-        hostname: "*.grida.co",
-      },
-      {
-        protocol: "https",
-        hostname: "*.unsplash.com",
-      },
-    ],
-  },
   async redirects() {
+    if (STATIC_EXPORT) return [];
     return [
       // /login => /sign-in
       {
@@ -142,6 +160,7 @@ const nextConfig: NextConfig = {
     ];
   },
   rewrites: async () => {
+    if (STATIC_EXPORT) return [];
     return [
       // Universal docs routing — resolves /_/<path> to the context-aware
       // canonical route. See docs/wg/platform/universal-docs-routing.md
@@ -170,6 +189,7 @@ const nextConfig: NextConfig = {
     ];
   },
   headers: async () => {
+    if (STATIC_EXPORT) return [];
     return [
       {
         source: "/v1/:path*",
@@ -250,6 +270,6 @@ const sentry_build_options: SentryBuildOptions | null = USE_TELEMETRY
     } satisfies SentryBuildOptions)
   : null;
 
-export default sentry_build_options
+export default sentry_build_options && !STATIC_EXPORT
   ? withSentryConfig(withMDX(nextConfig), sentry_build_options)
   : withMDX(nextConfig);
