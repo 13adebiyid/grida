@@ -9,17 +9,22 @@ export const metadata: Metadata = {
 export default async function BibleHelperBasePage({
   searchParams,
 }: {
-  searchParams: Promise<{ room: string }>;
+  searchParams: Promise<{ room?: string; scene?: string }>;
 }) {
-  const { room } = await searchParams;
+  const { room, scene } = await searchParams;
+  const roomId =
+    typeof room === "string" && room.trim() ? room.trim() : "default";
+  const initialSceneId =
+    typeof scene === "string" && scene.trim() ? scene.trim() : undefined;
 
   return (
     <main className="w-screen h-screen overflow-hidden">
       <Editor
         backend="canvas"
-        room_id={room}
+        room_id={roomId}
+        initialSceneId={initialSceneId}
         profile="bible-helper"
-        filekey="rhema-base-v4"
+        filekey={`rhema-base-v4-${roomId}`}
       />
     </main>
   );

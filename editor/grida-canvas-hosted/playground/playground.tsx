@@ -123,12 +123,7 @@ import cg from "@grida/cg";
 import cmath from "@grida/cmath";
 import { saveAs } from "file-saver";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
-import {
-  buildRhemaThemeRuntimeJson,
-  RHEMA_REFERENCE_BINDING_KEY,
-  RHEMA_REFERENCE_INCLUDE_VERSION_KEY,
-  RHEMA_SCRIPTURE_BINDING_KEY,
-} from "./rhema-contract";
+import { buildRhemaThemeRuntimeJson, stripTextFromSvg } from "./rhema-contract";
 
 const RHEMA_SCENE_BACKGROUND = kolor.colorformats.RGBA32F.fromHEX("#00000000");
 const RHEMA_STAGE_NAME = "Canvas 1920x1080";
@@ -140,6 +135,7 @@ const RHEMA_SERVICE_REFERENCE_IMAGES = {
   preacher: "/images/preacher-placeholder.jpg",
   singer: "/images/lyrics-placeholder.jpg",
 } as const;
+const BIBLE_HELPER_THEME_SAVE_MESSAGE_TYPE = "bible-helper-theme-save";
 
 function isRhemaStageCandidate(
   node: grida.program.nodes.Node | undefined
@@ -359,6 +355,7 @@ export type CanvasPlaygroundProps = {
   src?: string;
   document?: editor.state.IEditorStateInit;
   room_id?: string;
+  initialSceneId?: string;
   backend?: "dom" | "canvas";
   /**
    * OPFS file key. Determines which OPFS directory to use for persistence.
@@ -401,6 +398,7 @@ export default function CanvasPlayground({
   templates,
   src,
   room_id,
+  initialSceneId,
   filekey,
   warnOnUnsavedChanges = false,
   organizationId,
@@ -637,6 +635,7 @@ export default function CanvasPlayground({
                           canvasRef={handleCanvasRef}
                           onSaved={markSaved}
                           filekey={resolvedFilekey}
+                          initialSceneId={initialSceneId}
                           profile={profile}
                         />
                       </StarterKitOrgIdProvider>
@@ -657,12 +656,14 @@ function Consumer({
   canvasRef,
   onSaved,
   filekey,
+  initialSceneId,
   profile,
 }: {
   backend: "dom" | "canvas";
   canvasRef?: (canvas: HTMLCanvasElement | null) => void;
   onSaved: () => void;
   filekey: string;
+  initialSceneId?: string;
   profile: "default" | "bible-helper";
 }) {
   const isBibleHelper = profile === "bible-helper";
@@ -706,11 +707,25 @@ function Consumer({
       stageId,
     };
   });
+  const initialSceneLoadedRef = useRef<string | null>(null);
   const initializedRhemaSceneIdsRef = useRef<Set<string>>(new Set());
   const rhemaMigratedSceneIdsRef = useRef<Set<string>>(new Set());
   const libraryWindowControls = useFloatingWindowControls({
     defaultOpen: false,
   });
+
+  useEffect(() => {
+    if (!initialSceneId) return;
+    if (initialSceneLoadedRef.current === initialSceneId) return;
+    if (sceneMeta?.id === initialSceneId) {
+      initialSceneLoadedRef.current = initialSceneId;
+      return;
+    }
+    const target = instance.state.document.nodes[initialSceneId];
+    if (!target || target.type !== "scene") return;
+    instance.commands.loadScene(initialSceneId);
+    initialSceneLoadedRef.current = initialSceneId;
+  }, [initialSceneId, instance, sceneMeta?.id]);
 
   useEffect(() => {
     if (!isBibleHelper || !sceneMeta) return;
@@ -1190,141 +1205,44 @@ function SidebarLeft({
   isBibleHelper?: boolean;
 }) {
   const editor = useCurrentEditor();
-  const {
-    activeSceneId,
-    scenesCount,
-    serviceReference,
-    stageId,
-    textLayerOptions,
-    scriptureBindingNodeId,
-    referenceBindingNodeId,
-    includeVersionInReference,
-  } = useEditorState(editor, (state) => {
-    const sceneId = state.scene_id;
-    const sceneUserData = sceneId
-      ? ((state.document.metadata?.[sceneId]?.userdata as
-          | Record<string, unknown>
-          | undefined) ?? {})
-      : {};
-    const serviceReferenceRaw = sceneUserData[RHEMA_SERVICE_REFERENCE_KEY];
-    const serviceReference =
-      serviceReferenceRaw === "preacher" || serviceReferenceRaw === "singer"
-        ? serviceReferenceRaw
-        : null;
-    const childIds = sceneId ? (state.document.links[sceneId] ?? []) : [];
-    const stageIdRaw = sceneUserData.rhema_stage_node_id;
-    const explicitStageId = typeof stageIdRaw === "string" ? stageIdRaw : null;
-    const explicitStageNode = explicitStageId
-      ? state.document.nodes[explicitStageId]
-      : undefined;
-    const stageId =
-      (explicitStageId &&
-      childIds.includes(explicitStageId) &&
-      isRhemaStageCandidate(explicitStageNode)
-        ? explicitStageId
-        : null) ??
-      childIds.find((id) => {
-        return isRhemaStageCandidate(state.document.nodes[id]);
-      }) ??
-      null;
+  const { activeSceneId, scenesCount, serviceReference, stageId } =
+    useEditorState(editor, (state) => {
+      const sceneId = state.scene_id;
+      const sceneUserData = sceneId
+        ? ((state.document.metadata?.[sceneId]?.userdata as
+            | Record<string, unknown>
+            | undefined) ?? {})
+        : {};
+      const serviceReferenceRaw = sceneUserData[RHEMA_SERVICE_REFERENCE_KEY];
+      const serviceReference =
+        serviceReferenceRaw === "preacher" || serviceReferenceRaw === "singer"
+          ? serviceReferenceRaw
+          : null;
+      const childIds = sceneId ? (state.document.links[sceneId] ?? []) : [];
+      const stageIdRaw = sceneUserData.rhema_stage_node_id;
+      const explicitStageId =
+        typeof stageIdRaw === "string" ? stageIdRaw : null;
+      const explicitStageNode = explicitStageId
+        ? state.document.nodes[explicitStageId]
+        : undefined;
+      const stageId =
+        (explicitStageId &&
+        childIds.includes(explicitStageId) &&
+        isRhemaStageCandidate(explicitStageNode)
+          ? explicitStageId
+          : null) ??
+        childIds.find((id) => {
+          return isRhemaStageCandidate(state.document.nodes[id]);
+        }) ??
+        null;
 
-    const textLayerOptions: { id: string; name: string }[] = [];
-    if (sceneId) {
-      const queue = [...childIds];
-      while (queue.length > 0) {
-        const nodeId = queue.shift()!;
-        const node = state.document.nodes[nodeId];
-        if (!node) continue;
-        if (node.type === "tspan") {
-          textLayerOptions.push({
-            id: nodeId,
-            name: node.name?.trim() || `Text ${textLayerOptions.length + 1}`,
-          });
-        }
-        const children = state.document.links[nodeId] ?? [];
-        if (children.length) queue.push(...children);
-      }
-    }
-
-    const scriptureBindingRaw = sceneUserData[RHEMA_SCRIPTURE_BINDING_KEY];
-    const scriptureBindingNodeId =
-      typeof scriptureBindingRaw === "string" &&
-      textLayerOptions.some((opt) => opt.id === scriptureBindingRaw)
-        ? scriptureBindingRaw
-        : null;
-
-    const referenceBindingRaw = sceneUserData[RHEMA_REFERENCE_BINDING_KEY];
-    const referenceBindingNodeId =
-      typeof referenceBindingRaw === "string" &&
-      textLayerOptions.some((opt) => opt.id === referenceBindingRaw)
-        ? referenceBindingRaw
-        : null;
-
-    const includeVersionRaw =
-      sceneUserData[RHEMA_REFERENCE_INCLUDE_VERSION_KEY];
-    const includeVersionInReference =
-      typeof includeVersionRaw === "boolean" ? includeVersionRaw : true;
-
-    return {
-      activeSceneId: sceneId ?? null,
-      scenesCount: state.document.scenes_ref.length,
-      serviceReference,
-      stageId,
-      textLayerOptions,
-      scriptureBindingNodeId,
-      referenceBindingNodeId,
-      includeVersionInReference,
-    };
-  });
-
-  const setBibleLayerBinding = useCallback(
-    (type: "scripture" | "reference", nodeId: string | null) => {
-      if (!isBibleHelper || !activeSceneId) return;
-      const current = (editor.getUserData(activeSceneId) ?? {}) as Record<
-        string,
-        unknown
-      >;
-      const nextScripture =
-        type === "scripture" ? nodeId : scriptureBindingNodeId;
-      const nextReference =
-        type === "reference" ? nodeId : referenceBindingNodeId;
-
-      if (nextScripture && nextReference && nextScripture === nextReference) {
-        toast.error(
-          "Scripture and Reference must map to different text layers."
-        );
-        return;
-      }
-
-      editor.setUserData(activeSceneId, {
-        ...current,
-        [RHEMA_SCRIPTURE_BINDING_KEY]: nextScripture,
-        [RHEMA_REFERENCE_BINDING_KEY]: nextReference,
-      });
-    },
-    [
-      activeSceneId,
-      editor,
-      isBibleHelper,
-      referenceBindingNodeId,
-      scriptureBindingNodeId,
-    ]
-  );
-
-  const setIncludeVersionInReference = useCallback(
-    (enabled: boolean) => {
-      if (!isBibleHelper || !activeSceneId) return;
-      const current = (editor.getUserData(activeSceneId) ?? {}) as Record<
-        string,
-        unknown
-      >;
-      editor.setUserData(activeSceneId, {
-        ...current,
-        [RHEMA_REFERENCE_INCLUDE_VERSION_KEY]: enabled,
-      });
-    },
-    [activeSceneId, editor, isBibleHelper]
-  );
+      return {
+        activeSceneId: sceneId ?? null,
+        scenesCount: state.document.scenes_ref.length,
+        serviceReference,
+        stageId,
+      };
+    });
 
   const exportRhemaJson = useCallback(() => {
     if (!isBibleHelper || !activeSceneId) return;
@@ -1340,6 +1258,38 @@ function SidebarLeft({
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
     saveAs(blob, `${sceneName || "theme"}.rhema.json`);
+  }, [activeSceneId, editor.state.document, isBibleHelper]);
+
+  const saveThemeToBibleHelper = useCallback(async () => {
+    if (!isBibleHelper || !activeSceneId) return;
+    const payload = buildRhemaThemeRuntimeJson(
+      editor.state.document,
+      activeSceneId
+    );
+    try {
+      const svgBytes = await editor.exportNodeAs(activeSceneId, "SVG", {
+        format: "SVG",
+      });
+      const svgText =
+        typeof svgBytes === "string"
+          ? svgBytes
+          : new TextDecoder().decode(svgBytes as AllowSharedBufferSource);
+      payload.backdropSvg = stripTextFromSvg(svgText);
+    } catch {
+      payload.backdropSvg = null;
+    }
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage(
+        {
+          type: BIBLE_HELPER_THEME_SAVE_MESSAGE_TYPE,
+          payload,
+        },
+        "*"
+      );
+      toast.success(`Saved "${payload.scene.name}" to Bible Helper.`);
+      return;
+    }
+    toast.error("Bible Helper parent window was not detected.");
   }, [activeSceneId, editor.state.document, isBibleHelper]);
 
   const setServiceReference = useCallback(
@@ -1672,14 +1622,14 @@ function SidebarLeft({
             <div className="px-3 py-2 border-t">
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">
-                  Bible Mapping
+                  Theme Export
                 </span>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
                       type="button"
                       className="inline-flex items-center text-muted-foreground hover:text-foreground"
-                      aria-label="Bible mapping information"
+                      aria-label="Theme export information"
                     >
                       <InfoCircledIcon className="size-3.5" />
                     </button>
@@ -1689,59 +1639,21 @@ function SidebarLeft({
                     sideOffset={8}
                     className="max-w-72"
                   >
-                    Pick which text layers receive Scripture and Reference when
-                    rendering from your app.
+                    Bible mapping is now configured inside Bible Helper Themes
+                    TEMP settings. Export this theme and manage
+                    scripture/reference bindings there.
                   </TooltipContent>
                 </Tooltip>
               </div>
               <div className="mt-2 space-y-2">
-                <label className="flex flex-col gap-1 text-xs">
-                  <span>Scripture Layer</span>
-                  <select
-                    className="h-7 rounded border bg-background px-2 text-xs"
-                    value={scriptureBindingNodeId ?? ""}
-                    onChange={(e) =>
-                      setBibleLayerBinding(
-                        "scripture",
-                        e.currentTarget.value || null
-                      )
-                    }
-                  >
-                    <option value="">Not mapped</option>
-                    {textLayerOptions.map((opt) => (
-                      <option key={opt.id} value={opt.id}>
-                        {opt.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-xs">
-                  <span>Reference Layer</span>
-                  <select
-                    className="h-7 rounded border bg-background px-2 text-xs"
-                    value={referenceBindingNodeId ?? ""}
-                    onChange={(e) =>
-                      setBibleLayerBinding(
-                        "reference",
-                        e.currentTarget.value || null
-                      )
-                    }
-                  >
-                    <option value="">Not mapped</option>
-                    {textLayerOptions.map((opt) => (
-                      <option key={opt.id} value={opt.id}>
-                        {opt.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex items-center justify-between text-xs">
-                  <span>Show Version In Ref</span>
-                  <Switch
-                    checked={includeVersionInReference}
-                    onCheckedChange={setIncludeVersionInReference}
-                  />
-                </label>
+                <Button
+                  type="button"
+                  variant="default"
+                  className="h-7 w-full text-xs"
+                  onClick={saveThemeToBibleHelper}
+                >
+                  Save Theme
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
