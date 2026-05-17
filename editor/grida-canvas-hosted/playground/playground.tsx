@@ -1284,16 +1284,43 @@ function SidebarLeft({
       editor.state.document,
       activeSceneId
     );
+    // Export the Rhema stage container, NOT the scene root. Scene root is not
+    // a renderable node on the wasm backend (exportNodeAs throws "Failed to
+    // export node as SVG"). The stage is the 1920×1080 canvas container,
+    // detected upstream via isRhemaStageCandidate. Fall back to the scene
+    // only when no stage is present (legacy themes).
+    const exportTargetId = stageId ?? activeSceneId;
     try {
-      const svgBytes = await editor.exportNodeAs(activeSceneId, "SVG", {
+      console.info(
+        "[themes-temp:diag] starting SVG export, target",
+        exportTargetId,
+        stageId ? "(stage)" : "(scene fallback)"
+      );
+      const svgBytes = await editor.exportNodeAs(exportTargetId, "SVG", {
         format: "SVG",
       });
       const svgText =
         typeof svgBytes === "string"
           ? svgBytes
           : new TextDecoder().decode(svgBytes as AllowSharedBufferSource);
+      console.info(
+        "[themes-temp:diag] SVG export ok, raw length",
+        svgText.length,
+        "first 200 chars:",
+        svgText.slice(0, 200)
+      );
       payload.backdropSvg = stripTextFromSvg(svgText);
-    } catch {
+      console.info(
+        "[themes-temp:diag] stripped SVG length",
+        payload.backdropSvg.length
+      );
+    } catch (err) {
+      // Surface visibly — silent null on backdropSvg was the original
+      // regression that lost user-designed shapes without warning.
+      console.error("[themes-temp:diag] SVG export failed for backdrop", err);
+      toast.warning(
+        "Theme saved without backdrop — SVG export failed. Check console for details."
+      );
       payload.backdropSvg = null;
     }
     if (!parentOrigin) {
@@ -1314,7 +1341,13 @@ function SidebarLeft({
       return;
     }
     toast.error("Bible Helper parent window was not detected.");
-  }, [activeSceneId, editor.state.document, isBibleHelper, parentOrigin]);
+  }, [
+    activeSceneId,
+    editor.state.document,
+    isBibleHelper,
+    parentOrigin,
+    stageId,
+  ]);
 
   const setServiceReference = useCallback(
     async (mode: "preacher" | "singer" | null) => {
