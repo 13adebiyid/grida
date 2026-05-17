@@ -1040,6 +1040,7 @@ function Consumer({
                       showLibrary={!isBibleHelper}
                       isBibleHelper={isBibleHelper}
                       parentOrigin={parentOrigin}
+                      opfs={opfs}
                     />
                   )}
                   <EditorSurfaceClipboardSyncProvider />
@@ -1212,6 +1213,7 @@ function SidebarLeft({
   showLibrary = true,
   isBibleHelper = false,
   parentOrigin,
+  opfs,
 }: {
   toggleVisibility?: () => void;
   toggleMinimal?: () => void;
@@ -1221,6 +1223,9 @@ function SidebarLeft({
   // Trusted Bible Helper opener origin used as postMessage target in
   // saveThemeToBibleHelper. Undefined fails the save closed with a toast.
   parentOrigin?: string;
+  // OPFS handle for persisting the editor document on Save Theme so the user
+  // can reopen and edit existing themes instead of starting from blank canvas.
+  opfs?: io.opfs.Handle | null;
 }) {
   const editor = useCurrentEditor();
   const { activeSceneId, scenesCount, serviceReference, stageId } =
@@ -1280,6 +1285,32 @@ function SidebarLeft({
 
   const saveThemeToBibleHelper = useCallback(async () => {
     if (!isBibleHelper || !activeSceneId) return;
+    // Persist the editor document to OPFS first so reopening the theme
+    // restores the design (without this, Save Theme only broadcasts the
+    // runtime payload; the editor's own document state is never written
+    // and the next "Open Editor" loads an empty canvas).
+    if (opfs) {
+      try {
+        const dir = editor.archivedir();
+        for (const [filename, bytes] of Object.entries(dir.images)) {
+          await opfs.writeImage(filename, bytes);
+        }
+        const docBytes = io.GRID.encode(dir.document);
+        await opfs.get("document.grida").write(docBytes);
+        const snapshotJson = io.snapshot.stringify({
+          version: undefined,
+          document: dir.document,
+        });
+        await opfs
+          .get("document.grida1")
+          .write(new TextEncoder().encode(snapshotJson));
+      } catch (err) {
+        console.error("[themes-temp:diag] OPFS persist failed", err);
+        toast.warning(
+          "Theme saved but editor state did not persist — reopening may show a blank canvas."
+        );
+      }
+    }
     const payload = buildRhemaThemeRuntimeJson(
       editor.state.document,
       activeSceneId
@@ -1341,13 +1372,7 @@ function SidebarLeft({
       return;
     }
     toast.error("Bible Helper parent window was not detected.");
-  }, [
-    activeSceneId,
-    editor.state.document,
-    isBibleHelper,
-    parentOrigin,
-    stageId,
-  ]);
+  }, [activeSceneId, editor, isBibleHelper, parentOrigin, stageId, opfs]);
 
   const setServiceReference = useCallback(
     async (mode: "preacher" | "singer" | null) => {
