@@ -199,6 +199,20 @@ function flattenKey(relPath) {
 }
 
 function park() {
+  // Partial-state guard: if _app_excluded/ exists and is non-empty, a prior
+  // build crashed mid-restore. Refuse to start a new build that would mix
+  // current app/() state with stranded prior-run files. The operator must
+  // run `--recover` first.
+  if (existsSync(PARK_DIR)) {
+    const stale = readdirSync(PARK_DIR);
+    if (stale.length > 0) {
+      throw new Error(
+        `${PARK_DIR}/ contains ${stale.length} stranded entries from a prior crash: ${stale.join(", ")}.\n` +
+          `Run: node scripts/build-static.mjs --recover`,
+      );
+    }
+  }
+
   // Drift guard: enumerate app/(*) groups on disk and fail loudly if a new
   // one shows up that's not in our ROUTE_GROUPS allowlist. Otherwise a
   // future Grida change could silently include a server-only route in the
@@ -324,6 +338,7 @@ function restore() {
 // to repair the working tree.
 if (process.argv.includes("--recover")) {
   console.log("Running recovery sweep — restoring any stray parked files...");
+  const unresolved = [];
   if (existsSync(PARK_DIR)) {
     for (const entry of readdirSync(PARK_DIR)) {
       const from = join(PARK_DIR, entry);
@@ -335,6 +350,7 @@ if (process.argv.includes("--recover")) {
         console.warn(
           `  manual: ${from} — flattened from a nested path. Move it back to its original location in app/.`,
         );
+        unresolved.push(`flattened: ${from}`);
         continue;
       }
       if (!existsSync(to)) {
@@ -342,6 +358,7 @@ if (process.argv.includes("--recover")) {
         console.log(`  restored: ${to}`);
       } else {
         console.warn(`  skipped: ${to} already exists`);
+        unresolved.push(`collision: ${from} -> ${to}`);
       }
     }
   }
@@ -349,6 +366,17 @@ if (process.argv.includes("--recover")) {
     rmSync(LOCK, { force: true });
     console.log(`  removed stale lock: ${LOCK}`);
   }
+  if (unresolved.length > 0) {
+    console.error(
+      `\nRecovery PARTIAL — ${unresolved.length} entries need manual action:`,
+    );
+    for (const u of unresolved) console.error(`  - ${u}`);
+    console.error(
+      `\nAddress the items above (move parked files back manually), then re-run \`--recover\` to confirm a clean state.`,
+    );
+    process.exit(1);
+  }
+  console.log("Recovery complete.");
   process.exit(0);
 }
 
