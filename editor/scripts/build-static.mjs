@@ -208,10 +208,15 @@ function persistSnapshot(rel, originalContent) {
   mkdirSync(SNAPSHOT_DIR, { recursive: true });
   const flat = flattenPath(rel);
   writeFileSync(join(SNAPSHOT_DIR, `${flat}.bak`), originalContent);
+  // Atomic index.json write: write to tmp, then rename. A SIGKILL during the
+  // serialize+write step would otherwise leave a truncated JSON file, which
+  // --recover can't parse and would silently lose entries.
   const currentMap = Object.fromEntries(
     Array.from(strippedSnapshots.keys()).map((k) => [k, `${flattenPath(k)}.bak`]),
   );
-  writeFileSync(SNAPSHOT_MAP, JSON.stringify(currentMap, null, 2));
+  const tmp = `${SNAPSHOT_MAP}.tmp`;
+  writeFileSync(tmp, JSON.stringify(currentMap, null, 2));
+  renameSync(tmp, SNAPSHOT_MAP);
 }
 
 // Sanitize a relative app-path into a flat filename safe for PARK_DIR.
@@ -420,11 +425,10 @@ if (process.argv.includes("--recover")) {
     }
   }
 
-  // Step 3: clean up snapshot dir only when all content restores succeeded.
-  if (
-    existsSync(SNAPSHOT_DIR) &&
-    !unresolved.some((u) => u.startsWith("missing-backup") || u.startsWith("content-restore-failed"))
-  ) {
+  // Step 3: clean up snapshot dir ONLY when nothing went wrong at all. Tag-
+  // list matching is too narrow — a corrupt index.json (snapshot-index entry)
+  // or any other unresolved item must hold the snapshots open for triage.
+  if (existsSync(SNAPSHOT_DIR) && unresolved.length === 0) {
     rmSync(SNAPSHOT_DIR, { recursive: true, force: true });
   }
 
