@@ -199,6 +199,20 @@ function flattenKey(relPath) {
 }
 
 function park() {
+  // Drift guard: enumerate app/(*) groups on disk and fail loudly if a new
+  // one shows up that's not in our ROUTE_GROUPS allowlist. Otherwise a
+  // future Grida change could silently include a server-only route in the
+  // static export build graph.
+  const onDiskGroups = readdirSync(APP_DIR).filter(
+    (e) => e.startsWith("(") && e.endsWith(")"),
+  );
+  const unknown = onDiskGroups.filter((g) => !ROUTE_GROUPS.includes(g));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown app/() route group(s) — update ROUTE_GROUPS in build-static.mjs: ${unknown.join(", ")}`,
+    );
+  }
+
   mkdirSync(PARK_DIR, { recursive: true });
   for (const g of ROUTE_GROUPS) {
     if (KEEP.has(g)) continue;
@@ -305,12 +319,45 @@ function restore() {
   strippedSnapshots.clear();
 }
 
+// `--recover` flag: run restore-only logic (best-effort sweep of
+// _app_excluded/) without starting a new build. Use after SIGKILL / power loss
+// to repair the working tree.
+if (process.argv.includes("--recover")) {
+  console.log("Running recovery sweep — restoring any stray parked files...");
+  if (existsSync(PARK_DIR)) {
+    for (const entry of readdirSync(PARK_DIR)) {
+      const from = join(PARK_DIR, entry);
+      const to = join(APP_DIR, entry);
+      // Heuristic: top-level non-flattened entries (no '__') are route groups
+      // or single files; flattened entries (with '__') were nested paths we
+      // can't safely auto-restore — surface them.
+      if (entry.includes("__")) {
+        console.warn(
+          `  manual: ${from} — flattened from a nested path. Move it back to its original location in app/.`,
+        );
+        continue;
+      }
+      if (!existsSync(to)) {
+        renameSync(from, to);
+        console.log(`  restored: ${to}`);
+      } else {
+        console.warn(`  skipped: ${to} already exists`);
+      }
+    }
+  }
+  if (existsSync(LOCK)) {
+    rmSync(LOCK, { force: true });
+    console.log(`  removed stale lock: ${LOCK}`);
+  }
+  process.exit(0);
+}
+
 if (existsSync(LOCK)) {
   console.error(
     `Lock file ${LOCK} exists. Another build is running, or a previous build crashed mid-restore.`
   );
   console.error(
-    `If you're sure nothing is running, delete the lock file and inspect editor/_app_excluded/ for stray dirs to manually restore.`
+    `If you're sure nothing is running, run: node scripts/build-static.mjs --recover`
   );
   process.exit(1);
 }
