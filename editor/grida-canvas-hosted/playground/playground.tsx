@@ -390,6 +390,13 @@ export type CanvasPlaygroundProps = {
    * - bible-helper: disables non-essential overlays/surfaces while preserving core editor UI
    */
   profile?: "default" | "bible-helper";
+  /**
+   * Validated Bible Helper opener origin (e.g. "http://localhost:5173").
+   * When set, `saveThemeToBibleHelper` uses it as the postMessage target
+   * origin instead of the wildcard "*". When unset, the save action fails
+   * closed and shows a toast instead of broadcasting the payload.
+   */
+  parentOrigin?: string;
 } & Partial<UserCustomTemplatesProps>;
 
 export default function CanvasPlayground({
@@ -403,6 +410,7 @@ export default function CanvasPlayground({
   warnOnUnsavedChanges = false,
   organizationId,
   profile = "default",
+  parentOrigin,
 }: CanvasPlaygroundProps) {
   // Determine filekey: explicit prop > auto-generated from src > default "current"
   const resolvedFilekey = useMemo(() => {
@@ -637,6 +645,7 @@ export default function CanvasPlayground({
                           filekey={resolvedFilekey}
                           initialSceneId={initialSceneId}
                           profile={profile}
+                          parentOrigin={parentOrigin}
                         />
                       </StarterKitOrgIdProvider>
                     </UserCustomTemplatesProvider>
@@ -658,6 +667,7 @@ function Consumer({
   filekey,
   initialSceneId,
   profile,
+  parentOrigin,
 }: {
   backend: "dom" | "canvas";
   canvasRef?: (canvas: HTMLCanvasElement | null) => void;
@@ -665,6 +675,9 @@ function Consumer({
   filekey: string;
   initialSceneId?: string;
   profile: "default" | "bible-helper";
+  // Trusted Bible Helper opener origin, threaded through to SidebarLeft for
+  // saveThemeToBibleHelper. Undefined when not launched from Bible Helper.
+  parentOrigin?: string;
 }) {
   const isBibleHelper = profile === "bible-helper";
   const {
@@ -1026,6 +1039,7 @@ function Consumer({
                       libraryWindowControls={libraryWindowControls}
                       showLibrary={!isBibleHelper}
                       isBibleHelper={isBibleHelper}
+                      parentOrigin={parentOrigin}
                     />
                   )}
                   <EditorSurfaceClipboardSyncProvider />
@@ -1197,12 +1211,16 @@ function SidebarLeft({
   libraryWindowControls,
   showLibrary = true,
   isBibleHelper = false,
+  parentOrigin,
 }: {
   toggleVisibility?: () => void;
   toggleMinimal?: () => void;
   libraryWindowControls?: ReturnType<typeof useFloatingWindowControls>;
   showLibrary?: boolean;
   isBibleHelper?: boolean;
+  // Trusted Bible Helper opener origin used as postMessage target in
+  // saveThemeToBibleHelper. Undefined fails the save closed with a toast.
+  parentOrigin?: string;
 }) {
   const editor = useCurrentEditor();
   const { activeSceneId, scenesCount, serviceReference, stageId } =
@@ -1278,19 +1296,25 @@ function SidebarLeft({
     } catch {
       payload.backdropSvg = null;
     }
+    if (!parentOrigin) {
+      toast.error(
+        "Bible Helper origin missing — reopen the editor from Bible Helper to save themes."
+      );
+      return;
+    }
     if (window.parent && window.parent !== window) {
       window.parent.postMessage(
         {
           type: BIBLE_HELPER_THEME_SAVE_MESSAGE_TYPE,
           payload,
         },
-        "*"
+        parentOrigin
       );
       toast.success(`Saved "${payload.scene.name}" to Bible Helper.`);
       return;
     }
     toast.error("Bible Helper parent window was not detected.");
-  }, [activeSceneId, editor.state.document, isBibleHelper]);
+  }, [activeSceneId, editor.state.document, isBibleHelper, parentOrigin]);
 
   const setServiceReference = useCallback(
     async (mode: "preacher" | "singer" | null) => {
