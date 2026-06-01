@@ -69,9 +69,12 @@ export type RhemaComponentKind =
   | "scripture"
   | "reference"
   | "next-up"
+  | "next-slide-text"
   | "clock"
   | "segment-timer"
   | "video-countdown"
+  | "audio-countdown"
+  | "preshow-countdown"
   | "stage-message"
   | "slide-notes"
   | "screen-preview";
@@ -612,9 +615,12 @@ export function buildRhemaThemeRuntimeJson(
         kindRaw === "scripture" ||
         kindRaw === "reference" ||
         kindRaw === "next-up" ||
+        kindRaw === "next-slide-text" ||
         kindRaw === "clock" ||
         kindRaw === "segment-timer" ||
         kindRaw === "video-countdown" ||
+        kindRaw === "audio-countdown" ||
+        kindRaw === "preshow-countdown" ||
         kindRaw === "stage-message" ||
         kindRaw === "slide-notes" ||
         kindRaw === "screen-preview"

@@ -1,8 +1,8 @@
 /**
- * Stage component palette — insert templates for the 9 approved
- * stage-layout components (Current Scripture, Reference, Next Up,
- * Clock, Segment Timer, Video Countdown, Stage Message, Slide Notes,
- * Screen Preview).
+ * Stage component palette — insert templates for the 11 stage-layout
+ * components offered in the editor (Current Scripture, Current Reference,
+ * Next Up, Next Slide Text, Clock, Segment Timer, Video Countdown,
+ * PreShow Countdown, Stage Message, Slide Notes, Screen Preview).
  *
  * Each entry exports a label, a kind discriminator, and a `prototype`
  * factory that returns a Grida NodePrototype with sensible defaults
@@ -155,6 +155,23 @@ export const STAGE_COMPONENTS: StageComponentSpec[] = [
       }),
   },
   {
+    kind: "next-slide-text",
+    label: "Next Slide Text",
+    description: "Text of the upcoming slide (the queued verse / lyric).",
+    prototype: () =>
+      textPrototype({
+        name: "Next Slide Text",
+        text: "Next slide text will appear here.",
+        width: 1600,
+        height: 300,
+        left: 160,
+        top: 600,
+        fontSize: 44,
+        fontWeight: 500,
+        color: DIM_WHITE,
+      }),
+  },
+  {
     kind: "clock",
     label: "System Clock",
     description: "Live wall clock (1Hz). Formatted '1:23 PM'.",
@@ -204,6 +221,27 @@ export const STAGE_COMPONENTS: StageComponentSpec[] = [
         top: 60,
         fontSize: 72,
         fontWeight: 600,
+        textAlign: "center",
+      }),
+  },
+  // audio-countdown intentionally NOT offered in the palette: no audio source
+  // broadcasts a duration yet, so it can only render blank. The kind remains in
+  // RhemaComponentKind + StageLayoutRender so previously-saved layouts still load.
+  {
+    kind: "preshow-countdown",
+    label: "PreShow Countdown",
+    description:
+      "Counts down to a target start time (set in the stage controls).",
+    prototype: () =>
+      textPrototype({
+        name: "PreShow Countdown",
+        text: "5:00",
+        width: 600,
+        height: 200,
+        left: 660,
+        top: 440,
+        fontSize: 140,
+        fontWeight: 700,
         textAlign: "center",
       }),
   },

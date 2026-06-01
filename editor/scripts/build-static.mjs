@@ -104,6 +104,11 @@ const FILE_SWAPS = {
   // Convert bible-helper-base page to a Client Component that reads URL params
   // at runtime. Server-side `await searchParams` forces dynamic rendering, which
   // is incompatible with `output: "export"`.
+  //
+  // IMPORTANT: this stub is the source-of-truth for the BUILT page —
+  // it overwrites whatever lives in app/(canvas)/... during build, then
+  // restores. So every URL param that needs to flow into the editor
+  // MUST be read here. Currently: room, scene, parentOrigin, workspace.
   "app/(canvas)/canvas/examples/bible-helper-base/page.tsx": `"use client";
 import { useSearchParams } from "next/navigation";
 import { useMemo, Suspense } from "react";
@@ -114,27 +119,49 @@ import Editor from "../../editor";
 
 function BibleHelperBaseInner() {
   const searchParams = useSearchParams();
-  const { roomId, initialSceneId, validatedParentOrigin } = useMemo(() => {
-    const room = searchParams.get("room");
-    const scene = searchParams.get("scene");
-    const parentOrigin = searchParams.get("parentOrigin");
-    const roomId =
-      typeof room === "string" && room.trim() ? room.trim() : "default";
-    const initialSceneId =
-      typeof scene === "string" && scene.trim() ? scene.trim() : undefined;
-    let validatedParentOrigin: string | undefined;
-    if (typeof parentOrigin === "string" && parentOrigin.trim()) {
-      try {
-        const parsed = new URL(parentOrigin.trim());
-        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-          validatedParentOrigin = parsed.origin;
+  const { roomId, initialSceneId, validatedParentOrigin, workspaceMode, filekey } =
+    useMemo(() => {
+      const room = searchParams.get("room");
+      const scene = searchParams.get("scene");
+      const parentOrigin = searchParams.get("parentOrigin");
+      const workspace = searchParams.get("workspace");
+      const roomId =
+        typeof room === "string" && room.trim() ? room.trim() : "default";
+      const initialSceneId =
+        typeof scene === "string" && scene.trim() ? scene.trim() : undefined;
+      const workspaceMode: "stage" | "theme" | "slide" =
+        workspace === "stage"
+          ? "stage"
+          : workspace === "slide"
+            ? "slide"
+            : "theme";
+      let validatedParentOrigin: string | undefined;
+      if (typeof parentOrigin === "string" && parentOrigin.trim()) {
+        try {
+          const parsed = new URL(parentOrigin.trim());
+          if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+            validatedParentOrigin = parsed.origin;
+          }
+        } catch {
+          // ignore malformed parentOrigin
         }
-      } catch {
-        // ignore malformed parentOrigin
       }
-    }
-    return { roomId, initialSceneId, validatedParentOrigin };
-  }, [searchParams]);
+      // Filekey prefix is namespace-distinct per workspace so theme +
+      // stage + slide OPFS docs never collide.
+      const filekeyPrefix =
+        workspaceMode === "stage"
+          ? "rhema-stage-v1"
+          : workspaceMode === "slide"
+            ? "rhema-slide-v1"
+            : "rhema-base-v4";
+      return {
+        roomId,
+        initialSceneId,
+        validatedParentOrigin,
+        workspaceMode,
+        filekey: \`\${filekeyPrefix}-\${roomId}\`,
+      };
+    }, [searchParams]);
 
   return (
     <main className="w-screen h-screen overflow-hidden">
@@ -144,7 +171,8 @@ function BibleHelperBaseInner() {
         initialSceneId={initialSceneId}
         parentOrigin={validatedParentOrigin}
         profile="bible-helper"
-        filekey={\`rhema-base-v4-\${roomId}\`}
+        workspace={workspaceMode}
+        filekey={filekey}
       />
     </main>
   );

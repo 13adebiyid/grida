@@ -99,6 +99,8 @@ export function useInsertFile() {
         ?.userdata as Record<string, unknown> | undefined;
       const sceneLooksRhema =
         sceneUserData?.rhema_profile === "bible-helper" ||
+        sceneUserData?.rhema_lock_to_stage === true ||
+        typeof sceneUserData?.rhema_stage_node_id === "string" ||
         sceneNode.name.startsWith("Theme ");
       const sceneChildren = instance.state.document.links[scene_id] ?? [];
       const explicitStageId =
@@ -206,9 +208,10 @@ export function useInsertFile() {
       let insetTop = pointerY - height / 2;
       if (stage) {
         // For Rhema scenes, always spawn media centered in the stage.
-        // This avoids client/surface coordinate drift between backends.
-        insetLeft = Math.round(stage.x + (stage.width - width) / 2);
-        insetTop = Math.round(stage.y + (stage.height - height) / 2);
+        // Coords are STAGE-LOCAL because the node is parented under the
+        // stage container below, not at scene root.
+        insetLeft = Math.round((stage.width - width) / 2);
+        insetTop = Math.round((stage.height - height) / 2);
       }
 
       const inserted = instance.insert(
@@ -240,17 +243,24 @@ export function useInsertFile() {
             ],
           },
         },
-        null
+        stage ? stage.stageId : null
       );
       const nodeId = inserted[0];
       if (nodeId) {
-        instance.commands.changeNodePropertyPositioning(nodeId, {
-          layout_positioning: "absolute",
-          layout_inset_left: Math.round(insetLeft),
-          layout_inset_top: Math.round(insetTop),
-        });
-        instance.commands.changeNodeSize(nodeId, "width", width);
-        instance.commands.changeNodeSize(nodeId, "height", height);
+        // Select the freshly-imported image so the operator immediately sees it.
+        //
+        // No position/size re-assert here. For a Bible-Helper stage the insert
+        // reducer skips its viewport packer (see document.reducer.ts), so the
+        // node is placed at this prototype's centered, scaled-to-fit inset and
+        // its rendered transform stays in sync. Re-asserting the inset
+        // afterward would desync the document model from the rendered
+        // transform — that mismatch is exactly why imported media used to
+        // render outside the slide until it was dragged.
+        try {
+          instance.commands.select([nodeId]);
+        } catch {
+          // select is best-effort.
+        }
       }
 
       return nodeId ? [nodeId] : [];

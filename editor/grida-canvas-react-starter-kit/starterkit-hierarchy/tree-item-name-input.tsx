@@ -38,6 +38,16 @@ export function NameInput({
   const ref = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState(initialValue);
 
+  // Re-sync the displayed value when `initialValue` changes from outside
+  // after mount — e.g. the async OPFS scene-load applies the persisted
+  // name only after this input has already mounted with the default name.
+  // Without this, the scene-name display stays on the stale default
+  // ("Theme 1") until a double-click remounts the input. Guarded on
+  // `!isRenaming` so an in-progress edit is never clobbered.
+  useEffect(() => {
+    if (!isRenaming) setValue(initialValue);
+  }, [initialValue, isRenaming]);
+
   // Standard input change handler
   const onChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {

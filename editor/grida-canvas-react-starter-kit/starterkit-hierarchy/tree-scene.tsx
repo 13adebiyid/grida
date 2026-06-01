@@ -25,6 +25,17 @@ import {
 import { cn } from "@/components/lib/utils";
 import { NameInput } from "./tree-item-name-input";
 import grida from "@grida/schema";
+import { useSceneThumbnail } from "./scene-thumbnail-cache";
+
+/**
+ * In-memory clipboard for scene copy/paste. Module-level so it
+ * survives the menu close/reopen cycle but doesn't leak across tabs
+ * (we don't put scene contents in localStorage — the clipboard just
+ * remembers "which scene id to duplicate"; the actual node data
+ * remains in the editor's state until Paste fires). Cross-tab paste
+ * is a future enhancement (would need full scene-serialization).
+ */
+const sceneClipboard: { sceneId: string | null } = { sceneId: null };
 
 function SceneItemContextMenuWrapper({
   scene_id,
@@ -35,9 +46,17 @@ function SceneItemContextMenuWrapper({
   onStartRenaming?: () => void;
 }>) {
   const editor = useCurrentEditor();
-  const scenes_count = useEditorState(
+  const { scenes_count, copy_target_exists } = useEditorState(
     editor,
-    (state) => state.document.scenes_ref.length
+    (state) => ({
+      scenes_count: state.document.scenes_ref.length,
+      // Paste is enabled only when a scene id was copied AND that scene
+      // still exists in the document (deletion/swap can invalidate the
+      // clipboard).
+      copy_target_exists:
+        sceneClipboard.sceneId !== null &&
+        state.document.scenes_ref.includes(sceneClipboard.sceneId),
+    })
   );
 
   // a11y/bug prevent scene from being deleted if len === 1
@@ -49,6 +68,38 @@ function SceneItemContextMenuWrapper({
         {children}
       </ContextMenuTrigger>
       <ContextMenuContent className="min-w-52">
+        <ContextMenuItem
+          onSelect={() => {
+            sceneClipboard.sceneId = scene_id;
+          }}
+          className="text-xs"
+        >
+          Copy
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={() => {
+            if (sceneClipboard.sceneId) {
+              editor.commands.duplicateScene(sceneClipboard.sceneId);
+            }
+          }}
+          disabled={!copy_target_exists}
+          className="text-xs"
+        >
+          Paste
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          onSelect={() => {
+            editor.commands.deleteScene(scene_id);
+            if (sceneClipboard.sceneId === scene_id) {
+              sceneClipboard.sceneId = null;
+            }
+          }}
+          disabled={is_last_scene}
+          className="text-xs"
+        >
+          Delete
+        </ContextMenuItem>
         <ContextMenuItem
           onSelect={() => {
             onStartRenaming?.();
@@ -67,17 +118,52 @@ function SceneItemContextMenuWrapper({
           Duplicate
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem
-          onSelect={() => {
-            editor.commands.deleteScene(scene_id);
-          }}
-          disabled={is_last_scene}
-          className="text-xs"
-        >
-          Delete
+        {/* Copy Text Style / Paste Text Style — text-node operations.
+            Disabled on scene-level menu; will be added to the per-node
+            context menu in a follow-up commit. */}
+        <ContextMenuItem disabled className="text-xs">
+          Copy Text Style
+        </ContextMenuItem>
+        <ContextMenuItem disabled className="text-xs">
+          Paste Text Style
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
+  );
+}
+
+/**
+ * 16:9 thumbnail for a scene tile. Shows the live/cached SVG when available,
+ * else a placeholder. `index` is the 1-based slide number (ProPresenter-style).
+ */
+function SceneTileThumb({
+  sceneId,
+  index,
+}: {
+  sceneId: string;
+  index: number;
+}) {
+  const thumb = useSceneThumbnail(sceneId);
+  return (
+    <div className="flex items-center gap-2 w-full min-w-0">
+      <span className="w-4 shrink-0 text-[10px] tabular-nums text-muted-foreground text-right">
+        {index}
+      </span>
+      <div className="relative flex-1 min-w-0 aspect-video rounded-sm overflow-hidden border border-border bg-muted/40">
+        {thumb ? (
+          <img
+            src={thumb.dataUrl}
+            alt=""
+            className="absolute inset-0 w-full h-full object-contain"
+            draggable={false}
+          />
+        ) : (
+          <div className="absolute inset-0 grid place-items-center text-[9px] text-muted-foreground">
+            No Preview Available
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -215,7 +301,7 @@ export function ScenesList() {
 
   return (
     <Tree tree={tree} indent={0}>
-      {tree.getItems().map((item) => {
+      {tree.getItems().map((item, sceneIndex) => {
         const scene = item.getItemData();
         if (!scene || !scenesmap[scene.id]) return null;
         const isRenaming = item.isRenaming();
@@ -231,18 +317,20 @@ export function ScenesList() {
           >
             <TreeItem
               item={item}
-              className="group/item h-7 max-h-7 w-full py-0.5"
+              className="group/item w-full py-1"
               data-is-renaming={isRenaming}
             >
               <TreeItemLabel
                 className={cn(
-                  "h-full bg-transparent px-1!",
-                  "!outline-none !ring-0"
+                  "h-auto bg-transparent px-1! py-1 flex-col items-stretch gap-1",
+                  "!outline-none !ring-0",
+                  scene.id === scene_id && "ring-2 ring-primary rounded-md"
                 )}
                 onDoubleClick={() => {
                   item.startRenaming();
                 }}
               >
+                <SceneTileThumb sceneId={scene.id} index={sceneIndex + 1} />
                 {isRenaming ? (
                   <NameInput
                     isRenaming={isRenaming}
@@ -254,7 +342,7 @@ export function ScenesList() {
                     className="px-1 py-0.5 text-[11px] font-normal"
                   />
                 ) : (
-                  <div className="flex items-center min-w-0 w-full px-1 py-0.5">
+                  <div className="flex items-center min-w-0 w-full px-1">
                     <NameInput
                       isRenaming={false}
                       initialValue={scene.name}

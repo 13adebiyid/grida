@@ -143,10 +143,17 @@ export function StandaloneSceneBackground({
       isRhemaScene:
         sceneUserData?.rhema_profile === "bible-helper" ||
         scene?.name?.startsWith("Theme "),
+      isStageWorkspace: sceneUserData?.rhema_workspace === "stage",
       stageRect,
     };
   });
-  const { backgroundColor, transform, isRhemaScene, stageRect } = slice;
+  const {
+    backgroundColor,
+    transform,
+    isRhemaScene,
+    isStageWorkspace,
+    stageRect,
+  } = slice;
 
   const cssBackgroundColor = useMemo(() => {
     if (!backgroundColor) return undefined;
@@ -202,7 +209,9 @@ export function StandaloneSceneBackground({
               />
               <div
                 className="absolute inset-0 overflow-hidden"
-                style={{ backgroundColor: "#ffffff" }}
+                style={{
+                  backgroundColor: isStageWorkspace ? "#000000" : "#ffffff",
+                }}
               />
             </div>
           </>

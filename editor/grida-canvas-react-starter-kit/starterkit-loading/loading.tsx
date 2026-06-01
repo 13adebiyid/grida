@@ -1,4 +1,3 @@
-import { GridaLogo } from "../starterkit-icons";
 import {
   motion,
   AnimatePresence,
@@ -239,12 +238,12 @@ export function FullscreenLoadingOverlay({
             animate={{ opacity: 1 }}
           >
             <motion.div
-              className="text-sm text-muted-foreground"
+              className="text-2xl font-semibold tracking-tight text-foreground"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2, duration: 0.3 }}
             >
-              <GridaLogo />
+              Rhema
             </motion.div>
             <UXProgress
               loading={loading}
