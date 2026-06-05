@@ -1,4 +1,5 @@
 import grida from "@grida/schema";
+import { css } from "@/grida-canvas-utils/css";
 
 export const RHEMA_SCRIPTURE_BINDING_KEY = "rhema_binding_scripture_node_id";
 export const RHEMA_REFERENCE_BINDING_KEY = "rhema_binding_reference_node_id";
@@ -140,6 +141,16 @@ export type RhemaTextLayerRuntimeStyle = {
   /** Ready-to-use CSS `text-shadow` string built from the node's drop shadows
    *  (Grida fe_shadows), or null when there are none. */
   textShadow: string | null;
+  /** The FULL computed React text CSS for this node, produced by the SAME
+   *  `css.toReactTextStyle` the editor canvas uses — so the live output matches
+   *  the editor pixel-for-pixel for every text feature (text-decoration,
+   *  text-transform, em-correct letter/word-spacing, font-variation/feature
+   *  settings, vertical align, kerning…). `fontSize` and `color` are stripped:
+   *  fontSize is owned by BH's autosize and color by the structured `color`
+   *  field above (so gradient fills don't land as an invalid `color`). Downstream
+   *  `applyLayerStyle` spreads this over the structured fields, so it also
+   *  corrects unit mismatches (e.g. letterSpacing px→em). Null = no extra css. */
+  css: Record<string, string | number> | null;
 };
 
 export type RhemaThemeRuntimeJson = {
@@ -412,6 +423,32 @@ function readFromNodeAncestry<T>(
   return null;
 }
 
+/** Full computed React text CSS for a node via the SAME converter the editor
+ *  canvas uses, so the live output matches every text feature. fontSize + color
+ *  are stripped (owned by BH autosize / the structured color field). Returns
+ *  only serialisable string/number props; null on any failure. */
+function extractReactTextCss(
+  document: grida.program.document.Document,
+  nodeId: string
+): Record<string, string | number> | null {
+  const node = document.nodes[nodeId] as unknown;
+  if (!node || typeof node !== "object") return null;
+  let reactStyle: Record<string, unknown>;
+  try {
+    reactStyle = css.toReactTextStyle(
+      node as unknown as Parameters<typeof css.toReactTextStyle>[0]
+    ) as unknown as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const out: Record<string, string | number> = {};
+  for (const [k, v] of Object.entries(reactStyle)) {
+    if (k === "fontSize" || k === "color") continue;
+    if (typeof v === "string" || typeof v === "number") out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 function extractLayerRuntimeStyle(
   document: grida.program.document.Document,
   sceneId: string,
@@ -511,6 +548,7 @@ function extractLayerRuntimeStyle(
       parentById,
       (node) => resolveNodeTextShadow(node)
     ),
+    css: extractReactTextCss(document, nodeId),
   };
 }
 
