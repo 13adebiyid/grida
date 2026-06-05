@@ -72,6 +72,7 @@ export type RhemaComponentKind =
   | "next-slide-text"
   | "clock"
   | "segment-timer"
+  | "segment-title"
   | "video-countdown"
   | "audio-countdown"
   | "preshow-countdown"
@@ -131,6 +132,14 @@ export type RhemaTextLayerRuntimeStyle = {
   lineHeight: number | null;
   letterSpacing: number | null;
   textAlign: "left" | "center" | "right" | "justify" | null;
+  /** Text outline (Grida stroke). strokeColor is a CSS color; strokeWidth is in
+   *  px. Both null when the node has no stroke. Rendered downstream as
+   *  -webkit-text-stroke + paint-order:stroke (outline behind the glyph fill). */
+  strokeColor: string | null;
+  strokeWidth: number | null;
+  /** Ready-to-use CSS `text-shadow` string built from the node's drop shadows
+   *  (Grida fe_shadows), or null when there are none. */
+  textShadow: string | null;
 };
 
 export type RhemaThemeRuntimeJson = {
@@ -341,6 +350,47 @@ function resolveNodeFillColor(node: Record<string, unknown>): string | null {
   return paintToCss(node.fill);
 }
 
+/** Stroke colour — mirrors resolveNodeFillColor but reads the stroke paint(s). */
+function resolveNodeStrokeColor(node: Record<string, unknown>): string | null {
+  if (Array.isArray(node.stroke_paints) && node.stroke_paints.length > 0) {
+    for (let i = node.stroke_paints.length - 1; i >= 0; i -= 1) {
+      const color = paintToCss(node.stroke_paints[i]);
+      if (color) return color;
+    }
+  }
+  return paintToCss(node.stroke);
+}
+
+function resolveNodeStrokeWidth(node: Record<string, unknown>): number | null {
+  return typeof node.stroke_width === "number" && node.stroke_width > 0
+    ? node.stroke_width
+    : null;
+}
+
+/** Build a CSS `text-shadow` string from the node's drop shadows (fe_shadows).
+ *  Skips inset shadows (text-shadow has no inset). spread is ignored (text-shadow
+ *  has no spread). Returns null when there are no usable shadows. */
+function resolveNodeTextShadow(node: Record<string, unknown>): string | null {
+  const shadows = node.fe_shadows;
+  if (!Array.isArray(shadows) || shadows.length === 0) return null;
+  const parts: string[] = [];
+  for (const raw of shadows) {
+    if (!raw || typeof raw !== "object") continue;
+    const sh = raw as Record<string, unknown>;
+    if (sh.inset === true) continue;
+    const color = sh.color
+      ? rgbaRecordToCss(sh.color as Record<string, unknown>)
+      : null;
+    if (!color) continue;
+    const offset = Array.isArray(sh.offset) ? sh.offset : [0, 0];
+    const dx = typeof offset[0] === "number" ? offset[0] : 0;
+    const dy = typeof offset[1] === "number" ? offset[1] : 0;
+    const blur = typeof sh.blur === "number" ? sh.blur : 0;
+    parts.push(`${dx}px ${dy}px ${blur}px ${color}`);
+  }
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
 function readFromNodeAncestry<T>(
   document: grida.program.document.Document,
   sceneId: string,
@@ -440,6 +490,27 @@ function extractLayerRuntimeStyle(
         typeof node.letter_spacing === "number" ? node.letter_spacing : null
     ),
     textAlign: textAlignRaw,
+    strokeColor: readFromNodeAncestry(
+      document,
+      sceneId,
+      nodeId,
+      parentById,
+      (node) => resolveNodeStrokeColor(node)
+    ),
+    strokeWidth: readFromNodeAncestry(
+      document,
+      sceneId,
+      nodeId,
+      parentById,
+      (node) => resolveNodeStrokeWidth(node)
+    ),
+    textShadow: readFromNodeAncestry(
+      document,
+      sceneId,
+      nodeId,
+      parentById,
+      (node) => resolveNodeTextShadow(node)
+    ),
   };
 }
 
