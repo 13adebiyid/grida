@@ -196,6 +196,29 @@ export type RhemaThemeRuntimeJson = {
   workspace: RhemaWorkspace;
   /** Stage-only bindings (clock, next-layout). Empty when workspace === "theme". */
   stageBindings: RhemaStageBindings;
+  /** Shape nodes whose effects the flat backdrop SVG can't represent
+   *  (backdrop-blur / liquid-glass frost / procedural noise). BH renders these
+   *  as live positioned DIVs over the SVG so frosted-glass + grain panels work
+   *  on the live output. Drop-shadow / opacity / layer-blur are NOT here — the
+   *  SVG export already handles those. */
+  effectLayers: RhemaEffectLayer[];
+};
+
+/** A live-rendered shape panel (frosted glass / grain). Geometry is in STAGE
+ *  coordinates (same space as textLayer frames + the backdrop SVG). */
+export type RhemaEffectLayer = {
+  id: string;
+  frame: { x: number; y: number; width: number; height: number };
+  /** Backdrop blur radius in px (from fe_backdrop_blur, or fe_liquid_glass's
+   *  radius as a frosted approximation — true liquid glass is shader-only). */
+  backdropBlur: number | null;
+  /** Procedural grain overlay: CSS colour + 0..1 opacity, or null. */
+  noise: { color: string; opacity: number } | null;
+  /** Corner radius in px (rounded panel). */
+  cornerRadius: number;
+  /** True when the source effect was liquid-glass → add a light highlight/border
+   *  so the frosted approximation reads as glass. */
+  frosted: boolean;
 };
 
 type BibleContentPayload = {
@@ -657,6 +680,69 @@ export function getRhemaStageBindings(
   };
 }
 
+/** Collect shape nodes carrying effects the flat backdrop SVG can't represent
+ *  (backdrop-blur, liquid-glass frost, procedural noise) so BH can render them
+ *  as live DIVs. Drop-shadow/opacity/layer-blur are intentionally excluded —
+ *  Grida's SVG export already bakes those. */
+function extractEffectLayers(
+  document: grida.program.document.Document,
+  sceneId: string,
+  parentById: Map<string, string | null>
+): RhemaEffectLayer[] {
+  const out: RhemaEffectLayer[] = [];
+  for (const nodeId of collectAllSceneNodeIds(document, sceneId)) {
+    const node = document.nodes[nodeId] as unknown as
+      | Record<string, unknown>
+      | undefined;
+    if (!node || typeof node !== "object") continue;
+    if (node.type === "text") continue; // text styling handled separately
+
+    const bd = node.fe_backdrop_blur as Record<string, unknown> | undefined;
+    const lg = node.fe_liquid_glass as Record<string, unknown> | undefined;
+    const noiseRaw = node.fe_noise as Record<string, unknown> | undefined;
+
+    const backdropBlur =
+      bd && typeof bd.radius === "number" && bd.radius > 0
+        ? bd.radius
+        : lg && typeof lg.radius === "number" && lg.radius > 0
+          ? lg.radius
+          : null;
+    const noise =
+      noiseRaw && noiseRaw.color
+        ? {
+            color:
+              rgbaRecordToCss(noiseRaw.color as Record<string, unknown>) ??
+              "rgba(0,0,0,0.15)",
+            opacity:
+              typeof noiseRaw.density === "number"
+                ? Math.max(0.05, Math.min(1, noiseRaw.density))
+                : 0.3,
+          }
+        : null;
+
+    if (backdropBlur === null && !noise) continue; // nothing live to render
+
+    const frame = extractTextLayerFrame(document, sceneId, nodeId, parentById);
+    if (frame.width === null || frame.height === null) continue; // need geometry
+
+    out.push({
+      id: nodeId,
+      frame: {
+        x: frame.x,
+        y: frame.y,
+        width: frame.width,
+        height: frame.height,
+      },
+      backdropBlur,
+      noise,
+      cornerRadius:
+        typeof node.corner_radius === "number" ? node.corner_radius : 0,
+      frosted: !!lg,
+    });
+  }
+  return out;
+}
+
 export function buildRhemaThemeRuntimeJson(
   document: grida.program.document.Document,
   sceneId: string
@@ -748,6 +834,7 @@ export function buildRhemaThemeRuntimeJson(
     visibilityRules,
     workspace: getRhemaWorkspace(document, sceneId),
     stageBindings: getRhemaStageBindings(document, sceneId),
+    effectLayers: extractEffectLayers(document, sceneId, parentById),
   };
 }
 
