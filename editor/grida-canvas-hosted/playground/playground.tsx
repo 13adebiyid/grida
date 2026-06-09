@@ -200,6 +200,10 @@ const BIBLE_HELPER_SLIDE_BUNDLE_SAVE_MESSAGE_TYPE =
 // Editor → host: the document's unsaved-edits state. The host uses it to
 // confirm-before-discard when the operator closes the editor with unsaved work.
 const BIBLE_HELPER_EDITOR_DIRTY_MESSAGE_TYPE = "bible-helper-editor-dirty";
+// Host → editor: the operator confirmed "discard" on close, so drop the
+// crash-restore draft (discarded edits aren't offered to restore on reopen).
+const BIBLE_HELPER_DISCARD_DRAFT_MESSAGE_TYPE =
+  "bible-helper-editor-discard-draft";
 
 function isRhemaStageCandidate(
   node: grida.program.nodes.Node | undefined
@@ -540,6 +544,128 @@ export default function CanvasPlayground({
       parentOrigin
     );
   }, [dirty, parentOrigin, profile]);
+
+  // Crash-restore (item 6a): OPFS is written ONLY on explicit Save, so a crash
+  // before saving loses the work. Debounce-write the live document to a SEPARATE
+  // draft file on every edit; it's cleared on Save (saveThemeToBibleHelper) and
+  // consumed by the restore prompt below on the next load. Subscribes to
+  // document mutations directly — the dirty flag only transitions once, so it
+  // can't drive per-edit autosave.
+  useEffect(() => {
+    if (profile !== "bible-helper" || !opfs) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const writeDraft = () => {
+      try {
+        const dir = editor.archivedir();
+        const json = io.snapshot.stringify({
+          version: undefined,
+          document: dir.document,
+        });
+        void opfs
+          .get("document.draft.grida1")
+          .write(new TextEncoder().encode(json));
+      } catch (err) {
+        console.warn("[bh] draft autosave failed", err);
+      }
+    };
+    const unsubscribe = instance.doc.subscribeWithSelector(
+      (state) => state.document,
+      (_store, _next, _prev, action) => {
+        if (action?.type === "document/reset") return; // load/init, not an edit
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(writeDraft, 1200);
+      }
+    );
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [profile, opfs, instance, editor]);
+
+  // Crash-restore: after the saved document loads, if a draft from an
+  // interrupted session survived, offer to restore it (once per mount). The
+  // saved document is loaded as normal first (this is purely additive — it never
+  // changes the default load path); "Restore" swaps in the draft, "Discard"
+  // clears it (written empty; the read below gates on length > 0).
+  const draftCheckedRef = useRef(false);
+  useEffect(() => {
+    if (
+      profile !== "bible-helper" ||
+      !opfs ||
+      !documentReady ||
+      draftCheckedRef.current
+    )
+      return;
+    draftCheckedRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      let draftDocument: ReturnType<typeof io.GRID.decode> | null = null;
+      try {
+        const bytes = await opfs.get("document.draft.grida1").read();
+        if (bytes && bytes.length > 0) {
+          const snapshot = io.snapshot.parse(new TextDecoder().decode(bytes));
+          if (snapshot && snapshot.document) {
+            draftDocument = snapshot.document as ReturnType<
+              typeof io.GRID.decode
+            >;
+          }
+        }
+      } catch {
+        // no draft / unreadable — nothing to restore
+      }
+      if (cancelled || !draftDocument) return;
+      const clearDraft = () => {
+        try {
+          void opfs.get("document.draft.grida1").write(new Uint8Array(0));
+        } catch {
+          /* best effort */
+        }
+      };
+      const docToRestore = draftDocument;
+      toast("Restore unsaved changes?", {
+        description: "Your last editor session ended before saving.",
+        duration: Infinity,
+        action: {
+          label: "Restore",
+          onClick: () => {
+            try {
+              instance.commands.reset(
+                editor.state.init({ editable: true, document: docToRestore }),
+                "draft"
+              );
+            } catch (err) {
+              console.error("[bh] draft restore failed", err);
+            }
+          },
+        },
+        cancel: {
+          label: "Discard",
+          onClick: clearDraft,
+        },
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile, opfs, documentReady, instance, editor]);
+
+  // Host → editor: clear the crash-restore draft when the operator confirmed
+  // "discard" on a graceful close, so those edits aren't re-offered next time.
+  useEffect(() => {
+    if (profile !== "bible-helper" || !opfs || !parentOrigin) return;
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== parentOrigin || e.source !== window.parent) return;
+      const d = e.data as { type?: unknown } | null;
+      if (!d || d.type !== BIBLE_HELPER_DISCARD_DRAFT_MESSAGE_TYPE) return;
+      try {
+        void opfs.get("document.draft.grida1").write(new Uint8Array(0));
+      } catch {
+        /* best effort */
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [profile, opfs, parentOrigin]);
 
   useEffect(() => {
     if (backend !== "canvas") {
@@ -1803,6 +1929,10 @@ function SidebarLeft({
         await opfs
           .get("document.grida1")
           .write(new TextEncoder().encode(snapshotJson));
+        // Item 6a: the just-saved state is canonical, so the crash-restore
+        // draft is stale — clear it (empty write; the restore check gates on
+        // length > 0) so reopening doesn't offer to restore already-saved work.
+        await opfs.get("document.draft.grida1").write(new Uint8Array(0));
       } catch (err) {
         console.error("[themes-temp:diag] OPFS persist failed", err);
         toast.warning(
