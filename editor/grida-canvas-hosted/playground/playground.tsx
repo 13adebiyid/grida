@@ -147,7 +147,6 @@ import {
   type RhemaVisibilityRule,
   type RhemaVisibilityCondition,
   type RhemaWorkspace,
-  type RhemaComponentKind,
 } from "./rhema-contract";
 import { STAGE_COMPONENTS } from "./stage-components";
 import { StageComponentsToolbar } from "./stage-toolbar";
@@ -198,6 +197,9 @@ const BIBLE_HELPER_SLIDE_SAVE_MESSAGE_TYPE = "bible-helper-slide-save";
 // it routes payload to the LIBRARY (slides), not to the theme registry.
 const BIBLE_HELPER_SLIDE_BUNDLE_SAVE_MESSAGE_TYPE =
   "bible-helper-slide-bundle-save";
+// Editor → host: the document's unsaved-edits state. The host uses it to
+// confirm-before-discard when the operator closes the editor with unsaved work.
+const BIBLE_HELPER_EDITOR_DIRTY_MESSAGE_TYPE = "bible-helper-editor-dirty";
 
 function isRhemaStageCandidate(
   node: grida.program.nodes.Node | undefined
@@ -500,9 +502,14 @@ export default function CanvasPlayground({
   );
   const fonts = useEditorState(instance, (state) => state.webfontlist.items);
   const opfs = usePlaygroundOPFS(resolvedFilekey);
+  // Track document dirtiness for Bible Helper sessions too (NOT just when
+  // warnOnUnsavedChanges is set) so the host can confirm-before-discard on a
+  // graceful editor close. The beforeunload guard below stays gated on
+  // warnOnUnsavedChanges alone, so enabling tracking here does NOT add an
+  // iframe beforeunload prompt for BH.
   const { dirty, markSaved } = usePlaygroundDirtyFlag(
     instance,
-    warnOnUnsavedChanges
+    warnOnUnsavedChanges || profile === "bible-helper"
   );
   const [documentReady, setDocumentReady] = useState(() => !src);
   const [canvasReady, setCanvasReady] = useState(false);
@@ -521,6 +528,18 @@ export default function CanvasPlayground({
     // if (process.env.NODE_ENV === "development") return false;
     return dirty;
   });
+
+  // Editor → host: report unsaved-edits state so Bible Helper can confirm
+  // before discarding on a graceful editor close. Posts the current value on
+  // mount and on every change; the host treats "no message yet" as not-dirty.
+  useEffect(() => {
+    if (profile !== "bible-helper" || !parentOrigin) return;
+    if (typeof window === "undefined" || window.parent === window) return;
+    window.parent.postMessage(
+      { type: BIBLE_HELPER_EDITOR_DIRTY_MESSAGE_TYPE, dirty },
+      parentOrigin
+    );
+  }, [dirty, parentOrigin, profile]);
 
   useEffect(() => {
     if (backend !== "canvas") {
@@ -1670,89 +1689,82 @@ function SidebarLeft({
   opfs?: io.opfs.Handle | null;
 }) {
   const editor = useCurrentEditor();
-  const {
-    activeSceneId,
-    activeSceneName,
-    scenesCount,
-    sceneIds,
-    serviceReference,
-    stageId,
-    bundleName,
-    activeWorkspace,
-  } = useEditorState(editor, (state) => {
-    const sceneId = state.scene_id;
-    const sceneIds = state.document.scenes_ref;
-    const sceneUserData = sceneId
-      ? ((state.document.metadata?.[sceneId]?.userdata as
+  const { activeSceneId, scenesCount, serviceReference, stageId, bundleName } =
+    useEditorState(editor, (state) => {
+      const sceneId = state.scene_id;
+      const sceneIds = state.document.scenes_ref;
+      const sceneUserData = sceneId
+        ? ((state.document.metadata?.[sceneId]?.userdata as
+            | Record<string, unknown>
+            | undefined) ?? {})
+        : {};
+      const serviceReferenceRaw = sceneUserData[RHEMA_SERVICE_REFERENCE_KEY];
+      const serviceReference =
+        serviceReferenceRaw === "preacher" || serviceReferenceRaw === "singer"
+          ? serviceReferenceRaw
+          : null;
+      const childIds = sceneId ? (state.document.links[sceneId] ?? []) : [];
+      const stageIdRaw = sceneUserData.rhema_stage_node_id;
+      const explicitStageId =
+        typeof stageIdRaw === "string" ? stageIdRaw : null;
+      const explicitStageNode = explicitStageId
+        ? state.document.nodes[explicitStageId]
+        : undefined;
+      const stageId =
+        (explicitStageId &&
+        childIds.includes(explicitStageId) &&
+        isRhemaStageCandidate(explicitStageNode)
+          ? explicitStageId
+          : null) ??
+        childIds.find((id) => {
+          return isRhemaStageCandidate(state.document.nodes[id]);
+        }) ??
+        null;
+
+      // Bundle name lives on every scene's userData (no document-level userdata
+      // in Grida's schema). Read the first non-empty value — all scenes are
+      // kept in sync on rename.
+      let bundleName: string | null = null;
+      for (const sid of sceneIds) {
+        const ud = state.document.metadata?.[sid]?.userdata as
           | Record<string, unknown>
-          | undefined) ?? {})
-      : {};
-    const serviceReferenceRaw = sceneUserData[RHEMA_SERVICE_REFERENCE_KEY];
-    const serviceReference =
-      serviceReferenceRaw === "preacher" || serviceReferenceRaw === "singer"
-        ? serviceReferenceRaw
-        : null;
-    const childIds = sceneId ? (state.document.links[sceneId] ?? []) : [];
-    const stageIdRaw = sceneUserData.rhema_stage_node_id;
-    const explicitStageId = typeof stageIdRaw === "string" ? stageIdRaw : null;
-    const explicitStageNode = explicitStageId
-      ? state.document.nodes[explicitStageId]
-      : undefined;
-    const stageId =
-      (explicitStageId &&
-      childIds.includes(explicitStageId) &&
-      isRhemaStageCandidate(explicitStageNode)
-        ? explicitStageId
-        : null) ??
-      childIds.find((id) => {
-        return isRhemaStageCandidate(state.document.nodes[id]);
-      }) ??
-      null;
-
-    // Bundle name lives on every scene's userData (no document-level userdata
-    // in Grida's schema). Read the first non-empty value — all scenes are
-    // kept in sync on rename.
-    let bundleName: string | null = null;
-    for (const sid of sceneIds) {
-      const ud = state.document.metadata?.[sid]?.userdata as
-        | Record<string, unknown>
-        | undefined;
-      const raw = ud?.[RHEMA_BUNDLE_NAME_KEY];
-      if (typeof raw === "string" && raw.trim()) {
-        bundleName = raw;
-        break;
+          | undefined;
+        const raw = ud?.[RHEMA_BUNDLE_NAME_KEY];
+        if (typeof raw === "string" && raw.trim()) {
+          bundleName = raw;
+          break;
+        }
       }
-    }
 
-    // Workspace on the active scene.
-    const rawWorkspaceUserData = sceneUserData[RHEMA_WORKSPACE_KEY];
-    const activeWorkspace: RhemaWorkspace =
-      rawWorkspaceUserData === "stage"
-        ? "stage"
-        : rawWorkspaceUserData === "slide"
-          ? "slide"
-          : "theme";
+      // Workspace on the active scene.
+      const rawWorkspaceUserData = sceneUserData[RHEMA_WORKSPACE_KEY];
+      const activeWorkspace: RhemaWorkspace =
+        rawWorkspaceUserData === "stage"
+          ? "stage"
+          : rawWorkspaceUserData === "slide"
+            ? "slide"
+            : "theme";
 
-    // Active scene name — used by slide-workspace as the slide label
-    // (single source of truth: rename the label → rename the scene →
-    // saved payload's imported.name carries the new value to BH).
-    const activeSceneNode = sceneId ? state.document.nodes[sceneId] : null;
-    const activeSceneName =
-      activeSceneNode && (activeSceneNode as { name?: string }).name
-        ? (activeSceneNode as { name: string }).name
-        : null;
+      // Active scene name — used by slide-workspace as the slide label
+      // (single source of truth: rename the label → rename the scene →
+      // saved payload's imported.name carries the new value to BH).
+      const activeSceneNode = sceneId ? state.document.nodes[sceneId] : null;
+      const activeSceneName =
+        activeSceneNode && (activeSceneNode as { name?: string }).name
+          ? (activeSceneNode as { name: string }).name
+          : null;
 
-    return {
-      activeSceneId: sceneId ?? null,
-      activeSceneName,
-      scenesCount: sceneIds.length,
-      sceneIds: [...sceneIds],
-      serviceReference,
-      stageId,
-      bundleName,
-      activeWorkspace,
-    };
-  });
+      return {
+        activeSceneId: sceneId ?? null,
+        activeSceneName,
+        scenesCount: sceneIds.length,
+        sceneIds: [...sceneIds],
+        serviceReference,
+        stageId,
+        bundleName,
+        activeWorkspace,
+      };
+    });
 
   const exportRhemaJson = useCallback(() => {
     if (!isBibleHelper || !activeSceneId) return;
@@ -2049,7 +2061,7 @@ function SidebarLeft({
   ]);
 
   /** Set the workspace ("theme" or "stage") on the active scene. */
-  const setActiveSceneWorkspace = useCallback(
+  const _setActiveSceneWorkspace = useCallback(
     (next: RhemaWorkspace) => {
       if (!activeSceneId) return;
       const current = (editor.getUserData(activeSceneId) ?? {}) as Record<
@@ -2421,7 +2433,7 @@ function SidebarLeft({
   // Slide is single-scene by design, and BH reads imported.name from
   // the save payload to update slide.label everywhere downstream
   // (slot card, library entry, LiveScreen meta). One source of truth.
-  const setSlideName = useCallback(
+  const _setSlideName = useCallback(
     (next: string | null) => {
       if (!activeSceneId) return;
       const trimmed = typeof next === "string" ? next.trim() : "";
