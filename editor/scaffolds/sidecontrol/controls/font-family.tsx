@@ -24,6 +24,7 @@ import { cn } from "@/components/lib/utils";
 import grida from "@grida/schema";
 import type { GoogleWebFontListItem } from "@grida/fonts/google";
 import * as google from "@grida/fonts/google";
+import { localPreviewUrl } from "@/grida-canvas-hosted/playground/bible-helper-local-fonts";
 import {
   useCurrentEditor,
   useEditorState as useCanvasEditorState,
@@ -49,6 +50,86 @@ export function FontFamilyListProvider({
 
 function useFontFamilyList() {
   return React.useContext(FontFamilyListContext);
+}
+
+// ---------------------------------------------------------------------------
+// Local (installed) font families — Bible Helper
+// ---------------------------------------------------------------------------
+// The set of families that are the operator's INSTALLED fonts (served over
+// rhema-font://), not Google web fonts. The picker renders these with a CSS
+// preview instead of the Google preview image (which only exists for Google
+// families). Empty by default → no behavioural change for non-BH hosts.
+
+const LocalFontFamiliesContext = createContext<Set<string>>(new Set());
+
+export function LocalFontFamiliesProvider({
+  children,
+  families,
+}: React.PropsWithChildren<{ families: Set<string> }>) {
+  return (
+    <LocalFontFamiliesContext.Provider value={families}>
+      {children}
+    </LocalFontFamiliesContext.Provider>
+  );
+}
+
+function useLocalFontFamilies() {
+  return React.useContext(LocalFontFamiliesContext);
+}
+
+// Lazily load a local family's bytes into the editor document's FontFace set so
+// the picker's CSS preview renders in the real font. Loaded once per family;
+// once it resolves the browser re-renders any text using it (display swap), so
+// no React state is needed. The WASM canvas registers the same bytes
+// separately via the font pipeline — this is only for the DOM preview.
+const loadedLocalFamilies = new Set<string>();
+function ensureLocalFontFace(family: string, url: string): void {
+  if (typeof document === "undefined" || !(document as Document).fonts) return;
+  if (loadedLocalFamilies.has(family)) return;
+  loadedLocalFamilies.add(family);
+  try {
+    const face = new FontFace(family, `url("${url}")`);
+    face
+      .load()
+      .then((loaded) => {
+        (document as Document).fonts.add(loaded);
+      })
+      .catch(() => {
+        loadedLocalFamilies.delete(family); // allow a retry on a later render
+      });
+  } catch {
+    loadedLocalFamilies.delete(family);
+  }
+}
+
+function LocalFontPreview({
+  fontFamily,
+  className,
+}: {
+  fontFamily: string;
+  className?: string;
+}) {
+  const fonts = useFontFamilyList();
+  const url = React.useMemo(
+    () => localPreviewUrl(fonts.find((f) => f.family === fontFamily)),
+    [fonts, fontFamily]
+  );
+  React.useEffect(() => {
+    if (url) ensureLocalFontFace(fontFamily, url);
+  }, [fontFamily, url]);
+  return (
+    <span
+      className={cn("truncate", className)}
+      style={{
+        fontFamily: `"${fontFamily}", sans-serif`,
+        fontSize: 16,
+        lineHeight: "20px",
+        maxWidth: "100%",
+      }}
+    >
+      {fontFamily}
+    </span>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -80,12 +161,18 @@ function FontFamilyItem({
   fontFamily: string;
   selected: boolean;
 }) {
+  const localFamilies = useLocalFontFamilies();
+  const isLocal = localFamilies.has(fontFamily);
   return (
     <>
       <CheckIcon
         className={cn("size-4 min-w-4", selected ? "opacity-100" : "opacity-0")}
       />
-      <GoogleFontsPreview fontFamily={fontFamily} className="h-5" />
+      {isLocal ? (
+        <LocalFontPreview fontFamily={fontFamily} className="h-5" />
+      ) : (
+        <GoogleFontsPreview fontFamily={fontFamily} className="h-5" />
+      )}
     </>
   );
 }

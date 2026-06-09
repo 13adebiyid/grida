@@ -40,7 +40,15 @@ import {
 } from "@/grida-canvas-react/provider";
 import { GridaLogo } from "@/components/grida-logo";
 import { DevtoolsPanel } from "@/grida-canvas-react/devtools";
-import { FontFamilyListProvider } from "@/scaffolds/sidecontrol/controls/font-family";
+import {
+  FontFamilyListProvider,
+  LocalFontFamiliesProvider,
+} from "@/scaffolds/sidecontrol/controls/font-family";
+import {
+  BIBLE_HELPER_LIST_SYSTEM_FONTS_REQUEST,
+  BIBLE_HELPER_LIST_SYSTEM_FONTS_RESULT,
+  buildLocalWebfontItems,
+} from "./bible-helper-local-fonts";
 import {
   PlusIcon,
   Cross1Icon,
@@ -505,6 +513,15 @@ export default function CanvasPlayground({
     profile === "bible-helper" ? undefined : room_id
   );
   const fonts = useEditorState(instance, (state) => state.webfontlist.items);
+  // Bible Helper: the operator's INSTALLED fonts, fetched from the host and
+  // merged into the webfont registry so they appear in the picker AND load
+  // through the existing pipeline (getFontItem → fetch(files[v]) → addFont).
+  const localFontItemsRef = useRef<ReturnType<typeof buildLocalWebfontItems>>(
+    []
+  );
+  const [localFontFamilies, setLocalFontFamilies] = useState<Set<string>>(
+    () => new Set()
+  );
   const opfs = usePlaygroundOPFS(resolvedFilekey);
   // Track document dirtiness for Bible Helper sessions too (NOT just when
   // warnOnUnsavedChanges is set) so the host can confirm-before-discard on a
@@ -544,6 +561,49 @@ export default function CanvasPlayground({
       parentOrigin
     );
   }, [dirty, parentOrigin, profile]);
+
+  // Editor → host: ask for the operator's installed fonts, then keep them in a
+  // ref + a family-name set (the latter tells the picker to render a local CSS
+  // preview instead of the Google preview image). Requested once on mount.
+  useEffect(() => {
+    if (profile !== "bible-helper" || !parentOrigin) return;
+    if (typeof window === "undefined" || window.parent === window) return;
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== parentOrigin || e.source !== window.parent) return;
+      const d = e.data as { type?: unknown; fonts?: unknown } | null;
+      if (!d || d.type !== BIBLE_HELPER_LIST_SYSTEM_FONTS_RESULT) return;
+      const items = buildLocalWebfontItems(d.fonts);
+      if (items.length === 0) return;
+      localFontItemsRef.current = items;
+      setLocalFontFamilies(new Set(items.map((i) => i.family)));
+    };
+    window.addEventListener("message", onMessage);
+    window.parent.postMessage(
+      { type: BIBLE_HELPER_LIST_SYSTEM_FONTS_REQUEST },
+      parentOrigin
+    );
+    return () => window.removeEventListener("message", onMessage);
+  }, [profile, parentOrigin]);
+
+  // Merge the local font items into the webfont registry. Re-runs whenever the
+  // registry changes — so after the async Google-fonts warmup REPLACES the list
+  // (dropping our locals), this re-injects them. Converges: once every local
+  // family is present it stops dispatching, so there's no loop.
+  useEffect(() => {
+    if (profile !== "bible-helper") return;
+    const locals = localFontItemsRef.current;
+    if (locals.length === 0) return;
+    const present = new Set(fonts.map((f) => f.family));
+    const missing = locals.filter((l) => !present.has(l.family));
+    if (missing.length === 0) return;
+    instance.doc.dispatch({
+      type: "__internal/webfonts#webfontList",
+      webfontlist: {
+        kind: "webfonts#webfontList",
+        items: [...fonts, ...missing],
+      },
+    });
+  }, [fonts, localFontFamilies, profile, instance]);
 
   // Crash-restore (item 6a): OPFS is written ONLY on explicit Save, so a crash
   // before saving loses the work. Debounce-write the live document to a SEPARATE
@@ -913,29 +973,33 @@ export default function CanvasPlayground({
       <ErrorBoundary>
         <TooltipProvider>
           <FontFamilyListProvider fonts={fonts}>
-            <StandaloneDocumentEditor editor={instance}>
-              <div className="w-full h-full flex flex-row">
-                <SidebarProvider className="w-full h-full">
-                  <main className="w-full h-full select-none relative">
-                    <WindowGlobalCurrentEditorProvider />
-                    <UserCustomTemplatesProvider templates={templates}>
-                      <StarterKitOrgIdProvider organizationId={organizationId}>
-                        <Consumer
-                          backend={backend}
-                          canvasRef={handleCanvasRef}
-                          onSaved={markSaved}
-                          filekey={resolvedFilekey}
-                          initialSceneId={initialSceneId}
-                          profile={profile}
-                          parentOrigin={parentOrigin}
-                          workspace={workspace}
-                        />
-                      </StarterKitOrgIdProvider>
-                    </UserCustomTemplatesProvider>
-                  </main>
-                </SidebarProvider>
-              </div>
-            </StandaloneDocumentEditor>
+            <LocalFontFamiliesProvider families={localFontFamilies}>
+              <StandaloneDocumentEditor editor={instance}>
+                <div className="w-full h-full flex flex-row">
+                  <SidebarProvider className="w-full h-full">
+                    <main className="w-full h-full select-none relative">
+                      <WindowGlobalCurrentEditorProvider />
+                      <UserCustomTemplatesProvider templates={templates}>
+                        <StarterKitOrgIdProvider
+                          organizationId={organizationId}
+                        >
+                          <Consumer
+                            backend={backend}
+                            canvasRef={handleCanvasRef}
+                            onSaved={markSaved}
+                            filekey={resolvedFilekey}
+                            initialSceneId={initialSceneId}
+                            profile={profile}
+                            parentOrigin={parentOrigin}
+                            workspace={workspace}
+                          />
+                        </StarterKitOrgIdProvider>
+                      </UserCustomTemplatesProvider>
+                    </main>
+                  </SidebarProvider>
+                </div>
+              </StandaloneDocumentEditor>
+            </LocalFontFamiliesProvider>
           </FontFamilyListProvider>
         </TooltipProvider>
       </ErrorBoundary>
