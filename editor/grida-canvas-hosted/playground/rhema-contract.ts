@@ -36,6 +36,25 @@ export const RHEMA_BUNDLE_NAME_KEY = "rhema_bundle_name";
 export const RHEMA_WORKSPACE_KEY = "rhema_workspace";
 export type RhemaWorkspace = "theme" | "stage" | "slide";
 
+/**
+ * Scene-userdata key for the looping background-video reference. The
+ * operator picks a clip in the editor; BH stores the bytes in IndexedDB
+ * and hands back a `blobKey` (plus name/mimeType) which we stamp here.
+ * Stored on scene userdata so it round-trips on reopen via the JSON
+ * sidecar (same mechanism as workspace / visibility-rule keys), and is
+ * read back into the runtime payload by buildRhemaThemeRuntimeJson.
+ */
+export const RHEMA_BACKGROUND_VIDEO_KEY = "rhema_background_video";
+
+/** Looping background-video reference carried on a theme. `blobKey`
+ *  resolves to the bytes BH stored in IndexedDB; name/mimeType are
+ *  optional display + decode hints. */
+export type RhemaBackgroundVideo = {
+  blobKey: string;
+  name?: string;
+  mimeType?: string;
+};
+
 /** Stage-only binding keys. Like the scripture/reference binding keys
  *  but addressing dynamic-source text nodes (clock, etc.). */
 export const RHEMA_CLOCK_BINDING_KEY = "rhema_binding_clock_node_id";
@@ -165,6 +184,9 @@ export type RhemaThemeRuntimeJson = {
     height: number;
   };
   stageBackgroundColor: string | null;
+  /** Optional looping background-video reference. `blobKey` resolves to
+   *  bytes BH stored in IndexedDB; null/absent = no background video. */
+  backgroundVideo?: RhemaBackgroundVideo | null;
   backdropSvg: string | null;
   bindings: RhemaSceneBindings;
   textLayers: Array<{
@@ -658,6 +680,27 @@ export function getRhemaWorkspace(
 }
 
 /**
+ * Read the background-video reference stamped on a scene's userdata.
+ * Returns null when the scene has no clip selected, or when the stored
+ * value is malformed (missing a string blobKey).
+ */
+export function getRhemaBackgroundVideo(
+  document: grida.program.document.Document,
+  sceneId: string
+): RhemaBackgroundVideo | null {
+  const userdata = getSceneUserdata(document, sceneId);
+  const raw = userdata[RHEMA_BACKGROUND_VIDEO_KEY];
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.blobKey !== "string" || !r.blobKey.trim()) return null;
+  return {
+    blobKey: r.blobKey,
+    name: typeof r.name === "string" ? r.name : undefined,
+    mimeType: typeof r.mimeType === "string" ? r.mimeType : undefined,
+  };
+}
+
+/**
  * Resolve the stage-only bindings (clock, next layout) for a scene.
  * Returns nulls for entries that don't map to a valid text node.
  */
@@ -790,6 +833,7 @@ export function buildRhemaThemeRuntimeJson(
     },
     stage: { width: stage.width, height: stage.height },
     stageBackgroundColor: stage.backgroundColor,
+    backgroundVideo: getRhemaBackgroundVideo(document, sceneId),
     backdropSvg: null,
     bindings,
     textLayers: textNodes.map((node) => {

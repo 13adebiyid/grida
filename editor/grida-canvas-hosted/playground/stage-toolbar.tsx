@@ -22,6 +22,7 @@ import {
   TypeIcon,
   Volume2Icon,
   HourglassIcon,
+  ListIcon,
 } from "lucide-react";
 import { STAGE_COMPONENTS } from "./stage-components";
 import type { RhemaComponentKind } from "./rhema-contract";
@@ -75,6 +76,7 @@ const STAGE_COMPONENT_ICONS: Record<
   "next-slide-text": TypeIcon,
   clock: Clock3Icon,
   "segment-timer": TimerIcon,
+  "segment-title": ListIcon,
   "video-countdown": VideoIcon,
   "audio-countdown": Volume2Icon,
   "preshow-countdown": HourglassIcon,

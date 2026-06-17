@@ -185,7 +185,7 @@ export const STAGE_COMPONENTS: StageComponentSpec[] = [
         top: 40,
         fontSize: 96,
         fontWeight: 600,
-        textAlign: "right",
+        textAlign: "center",
       }),
   },
   {
@@ -203,8 +203,26 @@ export const STAGE_COMPONENTS: StageComponentSpec[] = [
         top: 40,
         fontSize: 96,
         fontWeight: 700,
-        textAlign: "left",
+        textAlign: "center",
         color: AMBER,
+      }),
+  },
+  {
+    kind: "segment-title",
+    label: "Segment Title",
+    description:
+      "Current + next service segment (driven by the service plan). 'Now: X / Next: Y'.",
+    prototype: () =>
+      textPrototype({
+        name: "Segment Title",
+        text: "Opening Prayer\nNext: Praise & Worship",
+        width: 1200,
+        height: 160,
+        left: 360,
+        top: 60,
+        fontSize: 56,
+        fontWeight: 600,
+        textAlign: "center",
       }),
   },
   {

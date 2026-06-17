@@ -22,9 +22,19 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { useCurrentEditor, useEditorState } from "@/grida-canvas-react";
+import {
+  useCurrentEditor,
+  useEditorState,
+  useNodeMetadata,
+} from "@/grida-canvas-react";
 import grida from "@grida/schema";
 import { RGBA32FColorControl } from "./controls/color";
+import { useCallback, useRef, useState } from "react";
+import { toast } from "sonner";
+import {
+  RHEMA_BACKGROUND_VIDEO_KEY,
+  type RhemaBackgroundVideo,
+} from "@/grida-canvas-hosted/playground/rhema-contract";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,6 +55,214 @@ function SceneBackgroundPropertyLine() {
           editor.commands.changeSceneBackground(scene_id, color);
         }}
       />
+    </PropertyLine>
+  );
+}
+
+const PICK_MEDIA_REQUEST_TYPE = "bible-helper-pick-media";
+const PICK_MEDIA_RESULT_TYPE = "bible-helper-pick-media-result";
+
+/**
+ * Resolve the Bible Helper opener origin the editor was launched with.
+ * Mirrors the validation in scripts/build-static.mjs (only http/https,
+ * normalised to .origin). Falls back to the iframe ancestor origin, then
+ * "*" as a last resort so a picked clip can still be uploaded even when
+ * the query param is absent — BH validates the message source on its end.
+ */
+function resolveParentOrigin(): string {
+  if (typeof window === "undefined") return "*";
+  try {
+    const param = new URLSearchParams(window.location.search).get(
+      "parentOrigin"
+    );
+    if (param && param.trim()) {
+      const parsed = new URL(param.trim());
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        return parsed.origin;
+      }
+    }
+  } catch {
+    // ignore malformed parentOrigin
+  }
+  const ancestor = window.location.ancestorOrigins?.[0];
+  if (ancestor && ancestor.trim()) return ancestor;
+  return "*";
+}
+
+/**
+ * Background-video picker. Lets the operator choose a looping clip; the
+ * bytes are shipped to Bible Helper over the postMessage bridge, which
+ * stores them in IndexedDB and replies with a stable blobKey. The
+ * resulting { blobKey, name, mimeType } reference is stamped on the
+ * scene's userdata so it round-trips on reopen and lands in the runtime
+ * payload via buildRhemaThemeRuntimeJson.
+ */
+function SceneBackgroundVideoPropertyLine() {
+  const editor = useCurrentEditor();
+  const { id: scene_id } = useCurrentSceneState();
+  const userdata = useNodeMetadata(scene_id, "userdata") as
+    | Record<string, unknown>
+    | undefined;
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const rawSelection = userdata?.[RHEMA_BACKGROUND_VIDEO_KEY];
+  const selection: RhemaBackgroundVideo | null =
+    rawSelection &&
+    typeof rawSelection === "object" &&
+    typeof (rawSelection as Record<string, unknown>).blobKey === "string"
+      ? (rawSelection as RhemaBackgroundVideo)
+      : null;
+
+  const writeSelection = useCallback(
+    (next: RhemaBackgroundVideo | null) => {
+      const current = (editor.getUserData(scene_id) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      if (next) {
+        editor.setUserData(scene_id, {
+          ...current,
+          [RHEMA_BACKGROUND_VIDEO_KEY]: next,
+        });
+      } else {
+        const { [RHEMA_BACKGROUND_VIDEO_KEY]: _removed, ...rest } = current;
+        editor.setUserData(scene_id, rest);
+      }
+    },
+    [editor, scene_id]
+  );
+
+  const onFileChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      // Reset the input so picking the same file again re-fires onChange.
+      e.target.value = "";
+      if (!file) return;
+
+      const parentOrigin = resolveParentOrigin();
+      const requestId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `bgvid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+      setUploading(true);
+      let bytes: ArrayBuffer;
+      try {
+        bytes = await file.arrayBuffer();
+      } catch (err) {
+        setUploading(false);
+        console.error("[bg-video] failed to read file", err);
+        toast.error("Could not read the selected video.");
+        return;
+      }
+
+      const onMessage = (ev: MessageEvent) => {
+        const data = ev.data as
+          | {
+              type?: string;
+              payload?: {
+                requestId?: string;
+                ok?: boolean;
+                blobKey?: string;
+                name?: string;
+                mimeType?: string;
+                error?: string;
+              };
+            }
+          | undefined;
+        if (
+          !data ||
+          data.type !== PICK_MEDIA_RESULT_TYPE ||
+          data.payload?.requestId !== requestId
+        ) {
+          return;
+        }
+        window.removeEventListener("message", onMessage);
+        clearTimeout(timeout);
+        setUploading(false);
+        const payload = data.payload;
+        if (payload?.ok && typeof payload.blobKey === "string") {
+          writeSelection({
+            blobKey: payload.blobKey,
+            name: payload.name ?? file.name,
+            mimeType: payload.mimeType ?? (file.type || undefined),
+          });
+          toast.success("Background video added.");
+        } else {
+          toast.error(
+            payload?.error
+              ? `Upload failed: ${payload.error}`
+              : "Upload failed."
+          );
+        }
+      };
+
+      // Guard against a silent bridge (BH not listening / older build).
+      const timeout = setTimeout(() => {
+        window.removeEventListener("message", onMessage);
+        setUploading(false);
+        toast.error("Upload timed out — no response from Bible Helper.");
+      }, 60_000);
+
+      window.addEventListener("message", onMessage);
+      window.parent.postMessage(
+        {
+          type: PICK_MEDIA_REQUEST_TYPE,
+          payload: {
+            requestId,
+            name: file.name,
+            mimeType: file.type || "video/mp4",
+            bytes,
+          },
+        },
+        parentOrigin,
+        [bytes]
+      );
+    },
+    [writeSelection]
+  );
+
+  return (
+    <PropertyLine className="items-center">
+      <PropertyLineLabel>Video</PropertyLineLabel>
+      <div className="flex-1 min-w-0 flex flex-col gap-1">
+        <span
+          className="text-[11px] text-muted-foreground truncate"
+          title={selection?.name ?? "None"}
+        >
+          {uploading ? "Uploading…" : (selection?.name ?? "None")}
+        </span>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="xs"
+            className="flex-1"
+            disabled={uploading}
+            onClick={() => inputRef.current?.click()}
+          >
+            {selection ? "Replace video…" : "Choose video…"}
+          </Button>
+          {selection && !uploading && (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="size-6 p-0"
+              title="Remove background video"
+              onClick={() => writeSelection(null)}
+            >
+              <TrashIcon />
+            </Button>
+          )}
+        </div>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="video/*"
+          className="hidden"
+          onChange={onFileChange}
+        />
+      </div>
     </PropertyLine>
   );
 }
@@ -71,6 +289,7 @@ export function DocumentProperties({ className }: { className?: string }) {
         </SidebarSectionHeaderItem>
         <SidebarMenuSectionContent>
           <SceneBackgroundPropertyLine />
+          <SceneBackgroundVideoPropertyLine />
         </SidebarMenuSectionContent>
       </SidebarSection>
       <hr />
