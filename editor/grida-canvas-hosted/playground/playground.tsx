@@ -596,6 +596,12 @@ export default function CanvasPlayground({
   );
   const [documentReady, setDocumentReady] = useState(() => !src);
   const [canvasReady, setCanvasReady] = useState(false);
+  // A seeded theme's backdrop SVG, stashed by the load effect and reconstructed
+  // by a canvasReady-gated effect once the WASM SVG decoder has bound.
+  const [pendingSeedBackdrop, setPendingSeedBackdrop] = useState<{
+    svg: string;
+    stageId: string;
+  } | null>(null);
   const [canvasElement, setCanvasElement] = useState<HTMLCanvasElement | null>(
     null
   );
@@ -1025,7 +1031,7 @@ export default function CanvasPlayground({
               workspace
             );
             if (seedTheme && !cancelled) {
-              const { document: seededDocument } =
+              const { document: seededDocument, stageId } =
                 materializeRhemaThemeDocument(seedTheme);
               instance.commands.reset(
                 editor.state.init({
@@ -1034,6 +1040,19 @@ export default function CanvasPlayground({
                 }),
                 "bh-seed"
               );
+              // Backdrop shapes need the WASM SVG decoder, which only binds
+              // once the canvas surface mounts (after this load effect). Stash
+              // the backdrop SVG + stage id; the canvasReady-gated effect below
+              // reconstructs it and reparents it under the stage as the FIRST
+              // child — so it renders BEHIND the text AND is re-exported on the
+              // next save (otherwise a seeded backdrop theme would lose its
+              // backdrop the first time the operator saves).
+              if (seedTheme.backdropSvg && seedTheme.backdropSvg.trim()) {
+                setPendingSeedBackdrop({
+                  svg: seedTheme.backdropSvg,
+                  stageId,
+                });
+              }
               setDocumentReady(true);
               return;
             }
@@ -1068,6 +1087,33 @@ export default function CanvasPlayground({
     room_id,
     workspace,
   ]);
+
+  // Reconstruct a seeded theme's backdrop once the canvas surface (and its SVG
+  // decoder) has bound. createNodeFromSvg is the inverse of the save's SVG
+  // export; mv reparents it under the stage as the first child (behind text).
+  useEffect(() => {
+    if (!pendingSeedBackdrop || !canvasReady) return;
+    let cancelled = false;
+    const { svg, stageId } = pendingSeedBackdrop;
+    void (async () => {
+      try {
+        const backdrop = await instance.commands.createNodeFromSvg(svg);
+        if (!cancelled && backdrop?.id) {
+          instance.commands.mv([backdrop.id], stageId, 0);
+        }
+      } catch (backdropError) {
+        console.warn(
+          "[bh-seed] backdrop reconstruction failed:",
+          backdropError
+        );
+      } finally {
+        if (!cancelled) setPendingSeedBackdrop(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingSeedBackdrop, canvasReady, instance]);
 
   const ready = documentReady && canvasReady;
 

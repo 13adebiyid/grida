@@ -1086,6 +1086,9 @@ function parseTextShadowToFeShadows(
 export function materializeRhemaThemeDocument(theme: RhemaThemeRuntimeJson): {
   document: grida.program.document.Document;
   sceneId: string;
+  /** The stage container node id — the seed hook reparents the reconstructed
+   *  backdrop under it (behind the text) so it round-trips on the next save. */
+  stageId: string;
 } {
   const sceneId = "main";
   const stageId = "rhema-stage";
@@ -1255,5 +1258,5 @@ export function materializeRhemaThemeDocument(theme: RhemaThemeRuntimeJson): {
     metadata,
   } as unknown as grida.program.document.Document;
 
-  return { document, sceneId };
+  return { document, sceneId, stageId };
 }
