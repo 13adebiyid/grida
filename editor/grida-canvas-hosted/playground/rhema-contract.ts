@@ -954,3 +954,306 @@ export function applyRhemaContentToDocument(
     },
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Inverse of buildRhemaThemeRuntimeJson: materialize a Grida document
+// from a stored theme payload (RhemaThemeRuntimeJson / BH GlobalTheme).
+//
+// WHY: the editor loads ONLY its own per-room OPFS document. Themes
+// authored in BH code (builtin defaults) or freshly-cloned private slide
+// themes have no OPFS document, so opening "Edit" showed a BLANK canvas.
+// When the room is empty, BH posts the stored theme JSON and the editor
+// seeds itself from it (playground load-effect hook). This is the
+// STRUCTURAL inverse: scene -> stage container -> one tspan per text
+// layer, carrying the same inset-based positioning, paint/stroke/shadow
+// fields, and metadata.userdata binding keys the extractor reads — so
+// buildRhemaThemeRuntimeJson(materialize(theme)) reproduces `theme`.
+//
+// Backdrop shapes (theme.backdropSvg) are reconstructed at RUNTIME via
+// the editor's createNodeFromSvg (the inverse of the SVG export used on
+// save) — they need the WASM decoder, so they are NOT built here; this
+// pure function owns the scene/stage/text/binding skeleton.
+// ─────────────────────────────────────────────────────────────────────
+
+type MaterializedRgba = { r: number; g: number; b: number; a: number };
+
+function to255Float(n: number): number {
+  return Math.max(0, Math.min(255, Math.round(n))) / 255;
+}
+
+/** Parse a CSS color (hex #rgb/#rrggbb/#rrggbbaa or rgb()/rgba()) into the
+ *  RGBA32F {r,g,b,a} float(0..1) shape Grida paints use. null = unparseable. */
+function cssColorToRgba(
+  input: string | null | undefined
+): MaterializedRgba | null {
+  if (typeof input !== "string") return null;
+  const s = input.trim();
+  if (!s) return null;
+  if (s.startsWith("#")) {
+    const raw = s.slice(1);
+    const full =
+      raw.length === 3
+        ? raw
+            .split("")
+            .map((c) => c + c)
+            .join("")
+        : raw;
+    if (full.length !== 6 && full.length !== 8) return null;
+    const r = parseInt(full.slice(0, 2), 16);
+    const g = parseInt(full.slice(2, 4), 16);
+    const b = parseInt(full.slice(4, 6), 16);
+    if ([r, g, b].some((n) => Number.isNaN(n))) return null;
+    const a = full.length === 8 ? parseInt(full.slice(6, 8), 16) / 255 : 1;
+    return { r: r / 255, g: g / 255, b: b / 255, a };
+  }
+  const m = s.match(/^rgba?\(([^)]*)\)$/i);
+  if (m) {
+    const parts = m[1].split(",").map((p) => p.trim());
+    if (parts.length < 3) return null;
+    const r = Number.parseFloat(parts[0]);
+    const g = Number.parseFloat(parts[1]);
+    const b = Number.parseFloat(parts[2]);
+    if ([r, g, b].some((n) => Number.isNaN(n))) return null;
+    const aRaw = parts[3] !== undefined ? Number.parseFloat(parts[3]) : 1;
+    return {
+      r: to255Float(r),
+      g: to255Float(g),
+      b: to255Float(b),
+      a: Number.isNaN(aRaw) ? 1 : Math.max(0, Math.min(1, aRaw)),
+    };
+  }
+  return null;
+}
+
+function solidPaintFromCss(
+  css: string | null | undefined
+): { type: "solid"; color: MaterializedRgba; active: true } | null {
+  const color = cssColorToRgba(css);
+  return color ? { type: "solid", color, active: true } : null;
+}
+
+/** Split on top-level commas only (commas inside rgba(...) stay grouped). */
+function splitTopLevelCommas(input: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    else if (ch === "," && depth === 0) {
+      out.push(input.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(input.slice(start));
+  return out.map((p) => p.trim()).filter(Boolean);
+}
+
+/** Inverse of resolveNodeTextShadow: a CSS `text-shadow` string ->
+ *  Grida fe_shadows[]. Parses the "<dx>px <dy>px <blur>px <color>" form the
+ *  exporter emits; anything else is skipped (best-effort, never throws). */
+function parseTextShadowToFeShadows(
+  textShadow: string | null | undefined
+): Array<{
+  color: MaterializedRgba;
+  offset: [number, number];
+  blur: number;
+  inset: false;
+}> {
+  if (typeof textShadow !== "string" || !textShadow.trim()) return [];
+  const out: Array<{
+    color: MaterializedRgba;
+    offset: [number, number];
+    blur: number;
+    inset: false;
+  }> = [];
+  for (const part of splitTopLevelCommas(textShadow)) {
+    const m = part.match(/^(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+(.+)$/);
+    if (!m) continue;
+    const color = cssColorToRgba(m[4]);
+    if (!color) continue;
+    out.push({
+      color,
+      offset: [Number.parseFloat(m[1]), Number.parseFloat(m[2])],
+      blur: Number.parseFloat(m[3]),
+      inset: false,
+    });
+  }
+  return out;
+}
+
+export function materializeRhemaThemeDocument(theme: RhemaThemeRuntimeJson): {
+  document: grida.program.document.Document;
+  sceneId: string;
+} {
+  const sceneId = "main";
+  const stageId = "rhema-stage";
+  const stageWidth = theme.stage?.width ?? 1920;
+  const stageHeight = theme.stage?.height ?? 1080;
+
+  const nodes: Record<string, unknown> = {};
+  const links: Record<string, string[]> = {};
+  const metadata: Record<string, { userdata: Record<string, unknown> }> = {};
+
+  // Scene — valid skeleton mirrored from distro EMPTY_DOCUMENT.
+  nodes[sceneId] = {
+    id: sceneId,
+    type: "scene",
+    name: theme.scene?.name ?? "Theme",
+    active: true,
+    locked: false,
+    guides: [],
+    edges: [],
+    constraints: { children: "multiple" },
+    background_color: { r: 0.96, g: 0.96, b: 0.96, a: 1 },
+  };
+
+  // Stage container — mirrors createRhemaStagePrototype. The theme's
+  // stageBackgroundColor lives on the STAGE FILL (resolveStageMeta reads
+  // the container fill, not the scene background_color).
+  const stageFill = solidPaintFromCss(theme.stageBackgroundColor) ?? {
+    type: "solid" as const,
+    color: { r: 0, g: 0, b: 0, a: 0 },
+    active: true as const,
+  };
+  nodes[stageId] = {
+    id: stageId,
+    type: "container",
+    name: "Canvas 1920x1080",
+    active: true,
+    locked: false,
+    opacity: 1,
+    blend_mode: "normal",
+    z_index: 0,
+    rotation: 0,
+    layout_positioning: "absolute",
+    layout_inset_left: 0,
+    layout_inset_top: 0,
+    layout_target_width: stageWidth,
+    layout_target_height: stageHeight,
+    clips_content: true,
+    corner_radius: 0,
+    layout_mode: "flow",
+    layout_direction: "horizontal",
+    layout_main_axis_alignment: "start",
+    layout_cross_axis_alignment: "start",
+    layout_main_axis_gap: 0,
+    layout_cross_axis_gap: 0,
+    layout_padding_top: 0,
+    layout_padding_right: 0,
+    layout_padding_bottom: 0,
+    layout_padding_left: 0,
+    fill_paints: [stageFill],
+    stroke_width: 1,
+    stroke_align: "inside",
+    stroke_cap: "butt",
+    stroke_join: "miter",
+  };
+
+  const textIds: string[] = [];
+  for (const layer of theme.textLayers ?? []) {
+    const style = layer.style ?? ({} as RhemaTextLayerRuntimeStyle);
+    const frame = layer.frame ?? { x: 0, y: 0, width: null, height: null };
+    const node: Record<string, unknown> = {
+      id: layer.id,
+      type: "tspan",
+      name: layer.name ?? "Text",
+      active: true,
+      locked: false,
+      opacity: 1,
+      blend_mode: "normal",
+      z_index: 0,
+      rotation: 0,
+      layout_positioning: "absolute",
+      layout_inset_left: frame.x ?? 0,
+      layout_inset_top: frame.y ?? 0,
+      layout_target_width:
+        typeof frame.width === "number" ? frame.width : "auto",
+      layout_target_height:
+        typeof frame.height === "number" ? frame.height : "auto",
+      text: typeof layer.text === "string" ? layer.text : "",
+      text_align: style.textAlign ?? "left",
+      text_align_vertical: "top",
+      stroke_align: "outside",
+      stroke_width:
+        typeof style.strokeWidth === "number" ? style.strokeWidth : 0,
+      word_spacing: 0,
+    };
+    if (style.fontFamily) node.font_family = style.fontFamily;
+    if (typeof style.fontSize === "number") node.font_size = style.fontSize;
+    if (style.fontWeight !== null && style.fontWeight !== undefined)
+      node.font_weight = style.fontWeight;
+    if (style.fontStyle === "italic") node.font_style_italic = true;
+    else if (typeof style.fontStyle === "string" && style.fontStyle)
+      node.font_style = style.fontStyle;
+    if (typeof style.lineHeight === "number")
+      node.line_height = style.lineHeight;
+    if (typeof style.letterSpacing === "number")
+      node.letter_spacing = style.letterSpacing;
+    const fill = solidPaintFromCss(style.color);
+    if (fill) node.fill_paints = [fill];
+    const stroke = solidPaintFromCss(style.strokeColor);
+    if (stroke) node.stroke_paints = [stroke];
+    const shadows = parseTextShadowToFeShadows(style.textShadow);
+    if (shadows.length > 0) node.fe_shadows = shadows;
+
+    nodes[layer.id] = node;
+    links[layer.id] = [];
+    textIds.push(layer.id);
+
+    if (layer.componentKind) {
+      metadata[layer.id] = {
+        userdata: { [RHEMA_COMPONENT_KIND_KEY]: layer.componentKind },
+      };
+    }
+  }
+
+  links[sceneId] = [stageId];
+  links[stageId] = textIds;
+
+  // Scene userdata — workspace + bindings + include-version + bg video +
+  // stage bindings. These are the keys getRhema*Bindings/Workspace read.
+  const bindings = theme.bindings ?? {
+    scriptureNodeId: null,
+    referenceNodeId: null,
+    includeVersionInReference: true,
+  };
+  const sceneUserdata: Record<string, unknown> = {
+    [RHEMA_WORKSPACE_KEY]: theme.workspace ?? "theme",
+    [RHEMA_REFERENCE_INCLUDE_VERSION_KEY]: bindings.includeVersionInReference,
+  };
+  if (bindings.scriptureNodeId)
+    sceneUserdata[RHEMA_SCRIPTURE_BINDING_KEY] = bindings.scriptureNodeId;
+  if (bindings.referenceNodeId)
+    sceneUserdata[RHEMA_REFERENCE_BINDING_KEY] = bindings.referenceNodeId;
+  if (theme.backgroundVideo)
+    sceneUserdata[RHEMA_BACKGROUND_VIDEO_KEY] = theme.backgroundVideo;
+  const stageBindings = theme.stageBindings ?? {
+    clockNodeId: null,
+    nextLayoutNodeId: null,
+  };
+  if (stageBindings.clockNodeId)
+    sceneUserdata[RHEMA_CLOCK_BINDING_KEY] = stageBindings.clockNodeId;
+  if (stageBindings.nextLayoutNodeId)
+    sceneUserdata[RHEMA_NEXT_LAYOUT_BINDING_KEY] =
+      stageBindings.nextLayoutNodeId;
+  metadata[sceneId] = { userdata: sceneUserdata };
+
+  // Per-node visibility rules — keyed by the TARGET node id.
+  for (const [targetId, rule] of Object.entries(theme.visibilityRules ?? {})) {
+    if (!rule) continue;
+    const existing = metadata[targetId]?.userdata ?? {};
+    existing[RHEMA_VISIBILITY_RULE_KEY] = rule;
+    metadata[targetId] = { userdata: existing };
+  }
+
+  const document = {
+    scenes_ref: [sceneId],
+    nodes,
+    links,
+    metadata,
+  } as unknown as grida.program.document.Document;
+
+  return { document, sceneId };
+}

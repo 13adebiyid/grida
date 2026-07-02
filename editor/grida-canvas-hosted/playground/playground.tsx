@@ -144,6 +144,7 @@ import { saveAs } from "file-saver";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
 import {
   buildRhemaThemeRuntimeJson,
+  materializeRhemaThemeDocument,
   stripTextFromSvg,
   RHEMA_BUNDLE_NAME_KEY,
   RHEMA_VISIBILITY_RULE_KEY,
@@ -152,6 +153,7 @@ import {
   RHEMA_NEXT_LAYOUT_BINDING_KEY,
   RHEMA_COMPONENT_KIND_KEY,
   type RhemaThemeBundleRuntimeJson,
+  type RhemaThemeRuntimeJson,
   type RhemaVisibilityRule,
   type RhemaVisibilityCondition,
   type RhemaWorkspace,
@@ -212,6 +214,66 @@ const BIBLE_HELPER_EDITOR_DIRTY_MESSAGE_TYPE = "bible-helper-editor-dirty";
 // crash-restore draft (discarded edits aren't offered to restore on reopen).
 const BIBLE_HELPER_DISCARD_DRAFT_MESSAGE_TYPE =
   "bible-helper-editor-discard-draft";
+// Editor → host: this room has NO OPFS document yet (a builtin/default theme
+// authored in BH code, or a freshly-cloned private theme) — request the stored
+// theme JSON so the editor can materialize a document instead of opening a
+// blank canvas. Host replies with BIBLE_HELPER_SEED_RESULT_MESSAGE_TYPE.
+const BIBLE_HELPER_SEED_REQUEST_MESSAGE_TYPE = "bible-helper-seed-request";
+const BIBLE_HELPER_SEED_RESULT_MESSAGE_TYPE = "bible-helper-seed-result";
+
+/**
+ * Ask the Bible Helper host for the stored theme payload for a room whose
+ * OPFS document is empty, so the editor can seed a document from it (the
+ * "opens a blank canvas" fix). Mirrors the font-list request/reply handshake:
+ * strict origin + source (must be window.parent) validation, a correlation
+ * requestId, and a bounded timeout so a non-responding host falls through to
+ * the empty document rather than hanging the load.
+ */
+function requestRhemaThemeSeed(
+  parentOrigin: string,
+  room: string,
+  workspace: RhemaWorkspace,
+  timeoutMs = 5000
+): Promise<RhemaThemeRuntimeJson | null> {
+  if (typeof window === "undefined" || window.parent === window) {
+    return Promise.resolve(null);
+  }
+  const requestId = `seed-${v4()}`;
+  return new Promise<RhemaThemeRuntimeJson | null>((resolve) => {
+    let settled = false;
+    const finish = (value: RhemaThemeRuntimeJson | null) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("message", onMessage);
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== parentOrigin || e.source !== window.parent) return;
+      const d = e.data as {
+        type?: unknown;
+        payload?: { requestId?: unknown; ok?: unknown; theme?: unknown };
+      } | null;
+      if (!d || d.type !== BIBLE_HELPER_SEED_RESULT_MESSAGE_TYPE) return;
+      const p = d.payload ?? {};
+      if (p.requestId !== requestId) return;
+      const theme =
+        p.ok === true && p.theme && typeof p.theme === "object"
+          ? (p.theme as RhemaThemeRuntimeJson)
+          : null;
+      finish(theme);
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    window.addEventListener("message", onMessage);
+    window.parent.postMessage(
+      {
+        type: BIBLE_HELPER_SEED_REQUEST_MESSAGE_TYPE,
+        payload: { requestId, room, workspace },
+      },
+      parentOrigin
+    );
+  });
+}
 
 function isRhemaStageCandidate(
   node: grida.program.nodes.Node | undefined
@@ -943,6 +1005,46 @@ export default function CanvasPlayground({
           }
         }
 
+        // BH seed-from-payload: no OPFS document exists for this room. For a
+        // builtin/default theme (authored in BH code, never opened in the
+        // editor) or a freshly-cloned private slide theme, that used to open
+        // a BLANK canvas. Ask the host for the stored theme JSON and
+        // materialize a document from it. The seed is NOT persisted to OPFS —
+        // it re-derives from BH's registry (the source of truth) on every
+        // open until the operator saves, so it can never go stale.
+        if (
+          !cancelled &&
+          profile === "bible-helper" &&
+          parentOrigin &&
+          room_id
+        ) {
+          try {
+            const seedTheme = await requestRhemaThemeSeed(
+              parentOrigin,
+              room_id,
+              workspace
+            );
+            if (seedTheme && !cancelled) {
+              const { document: seededDocument } =
+                materializeRhemaThemeDocument(seedTheme);
+              instance.commands.reset(
+                editor.state.init({
+                  editable: true,
+                  document: seededDocument,
+                }),
+                "bh-seed"
+              );
+              setDocumentReady(true);
+              return;
+            }
+          } catch (seedError) {
+            console.warn(
+              "[bh-seed] failed to seed from host payload:",
+              seedError
+            );
+          }
+        }
+
         // Fallback to provided document or empty
         if (!cancelled) {
           setDocumentReady(!!document);
@@ -955,7 +1057,17 @@ export default function CanvasPlayground({
     return () => {
       cancelled = true;
     };
-  }, [document, instance, src, opfs, backend]);
+  }, [
+    document,
+    instance,
+    src,
+    opfs,
+    backend,
+    profile,
+    parentOrigin,
+    room_id,
+    workspace,
+  ]);
 
   const ready = documentReady && canvasReady;
 
