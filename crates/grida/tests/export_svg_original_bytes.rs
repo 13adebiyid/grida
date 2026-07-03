@@ -347,6 +347,58 @@ fn svg_export_filtered_image_bakes_color_filter() {
     );
 }
 
+/// A cover-fit image fill inside a clipping container (the Rhema stage
+/// shape) must export exactly ONE image draw — a duplicated draw would
+/// double the payload and compound partial opacity.
+#[test]
+fn svg_export_draws_contained_image_fill_once() {
+    let jpeg = jpeg_bytes(40, 40, skia_safe::Color::RED);
+    let nf = NodeFactory::new();
+    let mut graph = SceneGraph::new();
+
+    let mut container = nf.create_container_node();
+    container.clip = true;
+    container.layout_dimensions.layout_target_width = Some(200.0);
+    container.layout_dimensions.layout_target_height = Some(100.0);
+    let container_id = graph.append_child(Node::Container(container), Parent::Root);
+
+    let mut rect = nf.create_rectangle_node();
+    rect.transform = AffineTransform::new(0.0, 0.0, 0.0);
+    rect.size = Size {
+        width: 200.0,
+        height: 100.0,
+    };
+    rect.fills = Paints::new([Paint::Image(image_paint(
+        ImagePaintFit::Fit(BoxFit::Cover),
+        RID,
+    ))]);
+    graph.append_child(Node::Rectangle(rect), Parent::NodeId(container_id));
+
+    let scene = Scene {
+        name: "SVG Contained Image Export".into(),
+        background_color: None,
+        graph,
+    };
+    let store = Arc::new(Mutex::new(ByteStore::new()));
+    let fonts = FontRepository::new(store.clone());
+    let mut images = ImageRepository::new(store);
+    images
+        .insert_bytes(RID.to_string(), &jpeg)
+        .expect("test image must register");
+
+    let svg = export_svg(&scene, &container_id, &fonts, &images);
+
+    let uses = svg.matches("<use").count();
+    let imgs = svg.matches("<image").count();
+    assert_eq!(
+        (imgs, uses),
+        (1, 1),
+        "a single contained image fill must export exactly one draw:\n{svg}"
+    );
+    assert_eq!(data_uris(&svg).len(), 1);
+    assert_eq!(data_uris(&svg)[0].1, jpeg);
+}
+
 /// Tile fills stay on the faithful shader/pattern path; substitution must
 /// not touch the pattern's inner <image> even when a Fit fill coexists in
 /// the same fill stack.

@@ -1244,18 +1244,27 @@ impl<'a> Painter<'a> {
             if let Some(data) = image.encoded_data() {
                 let bytes = data.as_bytes().to_vec();
                 if let Some(mime) = sniff_image_mime(&bytes) {
-                    // Draw the sentinel scaled up to the real image bounds:
-                    // the canvas quick-reject and the emitted clip see the
-                    // true geometry. The <use> then carries CTM·scale(W/s,
-                    // H/s); the substitution pass writes the recorded CTM
-                    // instead (what a real natural-size draw serializes).
-                    self.canvas.draw_image_rect_with_sampling_options(
+                    // Draw the sentinel under an extra scale concat so it
+                    // covers the real image bounds (canvas quick-reject and
+                    // emitted clips see the true geometry). Deliberately the
+                    // SAME `draw_image` call as the real path — the
+                    // emscripten Skia build serializes `drawImageRect` as
+                    // TWO device draws (host build: one), which broke the
+                    // pass's strict 1:1 accounting in the bundle. The <use>
+                    // then carries CTM·scale(W/s, H/s); the substitution
+                    // pass writes the recorded CTM instead (what a real
+                    // natural-size draw serializes).
+                    let s = super::image_export::SENTINEL_SIZE as f32;
+                    self.canvas.save();
+                    self.canvas
+                        .scale((image.width() as f32 / s, image.height() as f32 / s));
+                    self.canvas.draw_image_with_sampling_options(
                         ctx.sentinel(),
-                        None,
-                        skia_safe::Rect::from_wh(image.width() as f32, image.height() as f32),
+                        (0.0, 0.0),
                         sampling,
-                        sk_paint,
+                        Some(sk_paint),
                     );
+                    self.canvas.restore();
                     ctx.record(ExportImageDraw::Substitute {
                         width: image.width() as u32,
                         height: image.height() as u32,
