@@ -1734,6 +1734,7 @@ name = "grida"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "clap",
  "criterion",
  "csscascade",

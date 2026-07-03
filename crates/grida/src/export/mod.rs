@@ -1,6 +1,7 @@
 pub mod export_as_image;
 pub mod export_as_pdf;
 pub mod export_as_svg;
+pub mod svg_image_substitution;
 pub mod types;
 pub use types::*;
 

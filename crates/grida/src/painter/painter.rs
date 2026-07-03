@@ -211,6 +211,9 @@ pub struct Painter<'a> {
     /// off-screen `Draw` commands using the bitset built from the R-tree
     /// spatial query. `None` means draw everything (wireframe, tests, etc.).
     viewport_cull: Option<&'a ViewportCull<'a>>,
+    /// Vector-export image draw recording (see `painter::image_export`).
+    /// Only set by the SVG exporter; `None` on every interactive frame.
+    image_export: Option<&'a super::image_export::ExportImageContext>,
 }
 
 impl<'a> Painter<'a> {
@@ -262,6 +265,7 @@ impl<'a> Painter<'a> {
             can_unify_variant,
             promoted_blits: None,
             viewport_cull: None,
+            image_export: None,
         }
     }
 
@@ -277,6 +281,17 @@ impl<'a> Painter<'a> {
     /// off-screen `Draw` commands using the R-tree visibility bitset.
     pub fn with_viewport_cull(mut self, cull: &'a ViewportCull<'a>) -> Self {
         self.viewport_cull = Some(cull);
+        self
+    }
+
+    /// Attach the vector-export image draw recorder. Direct image fills are
+    /// then drawn as substitutable sentinels (or filter-baked snapshots) and
+    /// logged in draw order — see `painter::image_export`.
+    pub fn with_image_export_context(
+        mut self,
+        ctx: &'a super::image_export::ExportImageContext,
+    ) -> Self {
+        self.image_export = Some(ctx);
         self
     }
 
@@ -1150,22 +1165,145 @@ impl<'a> Painter<'a> {
         sk_paint.set_anti_alias(self.policy.anti_alias());
         sk_paint.set_blend_mode(img.blend_mode.into());
         sk_paint.set_alpha_f((img.opacity * opacity).clamp(0.0, 1.0));
-        if img.filters.has_filters() {
-            if let Some(color_filter) =
-                super::image_filters::create_image_filters_color_filter(&img.filters)
-            {
-                sk_paint.set_color_filter(color_filter);
-            }
-        }
+        let color_filter = if img.filters.has_filters() {
+            super::image_filters::create_image_filters_color_filter(&img.filters)
+        } else {
+            None
+        };
 
         // Same sampling as the shader path.
         let sampling = skia_safe::SamplingOptions::new(
             skia_safe::FilterMode::Nearest,
             skia_safe::MipmapMode::Nearest,
         );
-        self.canvas
-            .draw_image_with_sampling_options(image, (0.0, 0.0), sampling, Some(&sk_paint));
+        if let Some(ctx) = self.image_export {
+            self.draw_image_fill_export(ctx, image, img, color_filter, &mut sk_paint, sampling);
+        } else {
+            if let Some(cf) = color_filter {
+                sk_paint.set_color_filter(cf);
+            }
+            self.canvas.draw_image_with_sampling_options(
+                image,
+                (0.0, 0.0),
+                sampling,
+                Some(&sk_paint),
+            );
+        }
         self.canvas.restore();
+    }
+
+    /// Export-mode direct image draw (see `painter::image_export`).
+    ///
+    /// - Filtered fills bake the color filter into the drawn pixels — the
+    ///   SVG device silently drops paint color filters on image draws; the
+    ///   device's PNG re-encode is accepted for this case only.
+    /// - Unfiltered fills whose original encoded bytes are available (in a
+    ///   format every SVG consumer decodes) draw a tiny sentinel instead;
+    ///   the substitution pass rewrites the emitted `<image>` element to the
+    ///   original bytes and real dimensions.
+    /// - Everything else draws the real image (device PNG-encode, as
+    ///   before).
+    ///
+    /// Every branch records exactly one log entry — the substitution pass
+    /// relies on strict 1:1 draw↔element accounting.
+    fn draw_image_fill_export(
+        &self,
+        ctx: &super::image_export::ExportImageContext,
+        image: &skia_safe::Image,
+        img: &ImagePaint,
+        color_filter: Option<skia_safe::ColorFilter>,
+        sk_paint: &mut SkPaint,
+        sampling: skia_safe::SamplingOptions,
+    ) {
+        use super::image_export::{sniff_image_mime, ExportImageDraw};
+
+        if let Some(cf) = color_filter {
+            let baked = self.bake_color_filter(image, &cf, sampling);
+            if baked.is_none() {
+                // Surface creation failed: draw with the filter on the paint
+                // (dropped by the SVG device — today's fidelity, not worse).
+                sk_paint.set_color_filter(cf);
+            }
+            let drawn = baked.as_ref().unwrap_or(image);
+            self.canvas.draw_image_with_sampling_options(
+                drawn,
+                (0.0, 0.0),
+                sampling,
+                Some(sk_paint),
+            );
+            ctx.record(ExportImageDraw::Passthrough {
+                width: drawn.width() as u32,
+                height: drawn.height() as u32,
+                blend_mode: img.blend_mode,
+            });
+            return;
+        }
+
+        let ctm = self.canvas.local_to_device_as_3x3();
+        if !ctm.has_perspective() {
+            if let Some(data) = image.encoded_data() {
+                let bytes = data.as_bytes().to_vec();
+                if let Some(mime) = sniff_image_mime(&bytes) {
+                    // Draw the sentinel scaled up to the real image bounds:
+                    // the canvas quick-reject and the emitted clip see the
+                    // true geometry. The <use> then carries CTM·scale(W/s,
+                    // H/s); the substitution pass writes the recorded CTM
+                    // instead (what a real natural-size draw serializes).
+                    self.canvas.draw_image_rect_with_sampling_options(
+                        ctx.sentinel(),
+                        None,
+                        skia_safe::Rect::from_wh(image.width() as f32, image.height() as f32),
+                        sampling,
+                        sk_paint,
+                    );
+                    ctx.record(ExportImageDraw::Substitute {
+                        width: image.width() as u32,
+                        height: image.height() as u32,
+                        bytes,
+                        mime,
+                        blend_mode: img.blend_mode,
+                        transform: [
+                            ctm.scale_x(),
+                            ctm.skew_y(),
+                            ctm.skew_x(),
+                            ctm.scale_y(),
+                            ctm.translate_x(),
+                            ctm.translate_y(),
+                        ],
+                    });
+                    return;
+                }
+            }
+        }
+
+        self.canvas
+            .draw_image_with_sampling_options(image, (0.0, 0.0), sampling, Some(sk_paint));
+        ctx.record(ExportImageDraw::Passthrough {
+            width: image.width() as u32,
+            height: image.height() as u32,
+            blend_mode: img.blend_mode,
+        });
+    }
+
+    /// Draw `image` through `cf` into a raster surface at natural size.
+    /// `None` when the surface cannot be created.
+    fn bake_color_filter(
+        &self,
+        image: &skia_safe::Image,
+        cf: &skia_safe::ColorFilter,
+        sampling: skia_safe::SamplingOptions,
+    ) -> Option<skia_safe::Image> {
+        let mut surface = skia_safe::surfaces::raster_n32_premul((image.width(), image.height()))?;
+        let mut paint = SkPaint::default();
+        paint.set_anti_alias(false);
+        paint.set_color_filter(cf.clone());
+        surface.canvas().draw_image_with_sampling_options(
+            image,
+            (0.0, 0.0),
+            sampling,
+            Some(&paint),
+        );
+        Some(surface.image_snapshot())
     }
 
     /// Draw fills at pre-translated coordinates, avoiding canvas save/concat/restore.

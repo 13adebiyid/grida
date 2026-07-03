@@ -365,6 +365,10 @@ pub struct Renderer {
     /// `None` when isolation is inactive. Rebuilt by
     /// [`set_isolation_mode`] and cleared on `SCENE_LOAD`.
     isolation_set: Option<HashSet<NodeId>>,
+    /// Vector-export image draw recorder (see `painter::image_export`).
+    /// Set only by the SVG exporter around a `render_to_canvas` call;
+    /// `None` for every interactive frame.
+    image_export_context: Option<crate::painter::image_export::ExportImageContext>,
 }
 
 impl Renderer {
@@ -810,6 +814,7 @@ impl Renderer {
             last_prefill_layer_count: 0,
             render_filter: super::filter::RenderFilter::default(),
             isolation_set: None,
+            image_export_context: None,
         }
     }
 
@@ -1165,6 +1170,23 @@ impl Renderer {
     /// Configure the renderer render policy (standard vs wireframe presets, etc).
     pub fn set_render_policy(&mut self, policy: RenderPolicy) {
         self.config.render_policy = policy;
+    }
+
+    /// Attach a vector-export image draw recorder for the next
+    /// `render_to_canvas` call (see `painter::image_export`). SVG-export
+    /// only; leave `None` for every interactive frame.
+    pub fn set_image_export_context(
+        &mut self,
+        ctx: Option<crate::painter::image_export::ExportImageContext>,
+    ) {
+        self.image_export_context = ctx;
+    }
+
+    /// The attached vector-export image draw recorder, if any.
+    pub fn image_export_context(
+        &self,
+    ) -> Option<&crate::painter::image_export::ExportImageContext> {
+        self.image_export_context.as_ref()
     }
 
     /// Enable or disable layout computation during `load_scene`.
@@ -3003,13 +3025,16 @@ impl Renderer {
         canvas.concat(&sk::sk_matrix(self.camera.view_matrix().matrix));
 
         // Always use the command pipeline for export to ensure masks are applied.
-        let painter = Painter::new_with_scene_cache(
+        let mut painter = Painter::new_with_scene_cache(
             canvas,
             &self.fonts,
             &self.images,
             &self.scene_cache,
             self.config.render_policy,
         );
+        if let Some(ctx) = &self.image_export_context {
+            painter = painter.with_image_export_context(ctx);
+        }
         painter.draw_layer_list(&self.scene_cache.layers);
 
         let __painter_duration = __before_paint.elapsed();

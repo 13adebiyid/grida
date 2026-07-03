@@ -6,6 +6,7 @@ pub mod effects_noise;
 pub mod geometry;
 pub mod gradient;
 pub mod image;
+pub mod image_export;
 pub mod image_filters;
 pub mod layer;
 pub mod paint;
