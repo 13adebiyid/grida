@@ -36,8 +36,17 @@ import {
 import {
   useContentEditModeMinimalState,
   useCurrentSceneState,
+  useNodeState,
   useToolState,
 } from "@/grida-canvas-react/provider";
+import { FeShadowProperties } from "@/scaffolds/sidecontrol/controls/fe";
+import {
+  PropertySection,
+  PropertySectionContent,
+  PropertySectionHeaderItem,
+  PropertySectionHeaderLabel,
+  PropertySectionHeaderActions,
+} from "@/scaffolds/sidecontrol/ui";
 import { GridaLogo } from "@/components/grida-logo";
 import { DevtoolsPanel } from "@/grida-canvas-react/devtools";
 import {
@@ -51,6 +60,7 @@ import {
 } from "./bible-helper-local-fonts";
 import {
   PlusIcon,
+  MinusIcon,
   Cross1Icon,
   InfoCircledIcon,
   ChevronRightIcon,
@@ -3319,6 +3329,123 @@ function useRhemaStageBindings(editor: ReturnType<typeof useCurrentEditor>) {
   return { ...data, setStageBinding };
 }
 
+/** Rhema (bible-helper) only: surface the shadow editor for TEXT layers
+ * inline in the properties panel. The generic path to the same control —
+ * Effects header → "+" → effect row → icon-button popover (FeControl /
+ * FeShadowProperties) — proved undiscoverable in booth use ("text shadow
+ * doesn't let you adjust how big the shadow is"). This renders the SAME
+ * FeShadowProperties bound to fe_shadows[0] via the SAME
+ * changeNodeFilterEffects command — no separate shadow model. Additional
+ * shadows and other effects stay editable in the Effects section.
+ */
+function RhemaTextShadowSection() {
+  const instance = useCurrentEditor();
+  const selected = useEditorState(instance, (state) =>
+    state.selection.length === 1 ? state.selection[0] : null
+  );
+  if (!selected) return null;
+  return <RhemaTextShadowSectionBody key={selected} node_id={selected} />;
+}
+
+function RhemaTextShadowSectionBody({ node_id }: { node_id: string }) {
+  const instance = useCurrentEditor();
+  const {
+    type,
+    fe_shadows,
+    fe_blur,
+    fe_backdrop_blur,
+    fe_liquid_glass,
+    fe_noises,
+  } = useNodeState(node_id, (node) => ({
+    type: node.type,
+    fe_shadows: node.fe_shadows,
+    fe_blur: node.fe_blur,
+    fe_backdrop_blur: node.fe_backdrop_blur,
+    fe_liquid_glass: node.fe_liquid_glass,
+    fe_noises: node.fe_noises,
+  }));
+
+  // changeNodeFilterEffects replaces the node's WHOLE effects array, so
+  // rebuild it with the first shadow swapped/added/removed. Composition
+  // order mirrors SectionEffects (shadows, blur, backdrop, glass, noises).
+  const withFirstShadow = useCallback(
+    (shadow: cg.FeShadow | null): cg.FilterEffect[] => {
+      const effects: cg.FilterEffect[] = [];
+      if (shadow) effects.push(shadow);
+      effects.push(...(fe_shadows ?? []).slice(1));
+      if (fe_blur) effects.push(fe_blur);
+      if (fe_backdrop_blur) effects.push(fe_backdrop_blur);
+      if (fe_liquid_glass) effects.push(fe_liquid_glass);
+      if (fe_noises) effects.push(...fe_noises);
+      return effects;
+    },
+    [fe_shadows, fe_blur, fe_backdrop_blur, fe_liquid_glass, fe_noises]
+  );
+
+  if (type !== "tspan") return null;
+  const shadow = fe_shadows?.[0];
+
+  return (
+    <PropertySection
+      data-empty={!shadow}
+      className="border-b [&[data-empty='true']]:pb-0"
+    >
+      <PropertySectionHeaderItem
+        onClick={
+          shadow
+            ? undefined
+            : () =>
+                instance.commands.changeNodeFilterEffects(
+                  node_id,
+                  withFirstShadow({
+                    type: "shadow",
+                    ...editor.config.DEFAULT_FE_SHADOW,
+                  })
+                )
+        }
+      >
+        <PropertySectionHeaderLabel>Text shadow</PropertySectionHeaderLabel>
+        <PropertySectionHeaderActions>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={
+              shadow
+                ? (e) => {
+                    e.stopPropagation();
+                    instance.commands.changeNodeFilterEffects(
+                      node_id,
+                      withFirstShadow(null)
+                    );
+                  }
+                : undefined
+            }
+          >
+            {shadow ? (
+              <MinusIcon className="size-3" />
+            ) : (
+              <PlusIcon className="size-3" />
+            )}
+          </Button>
+        </PropertySectionHeaderActions>
+      </PropertySectionHeaderItem>
+      {shadow && (
+        <PropertySectionContent>
+          <FeShadowProperties
+            value={shadow}
+            onValueChange={(v) => {
+              instance.commands.changeNodeFilterEffects(
+                node_id,
+                withFirstShadow({ ...v, type: "shadow" } as cg.FeShadow)
+              );
+            }}
+          />
+        </PropertySectionContent>
+      )}
+    </PropertySection>
+  );
+}
+
 function SidebarRight({
   variant = "sidebar",
   tab,
@@ -3438,14 +3565,17 @@ function SidebarRight({
                 </Tabs>
                 <SidebarContent className="gap-0">
                   {bhTab === "properties" ? (
-                    <Selection
-                      config={{ position: "off", developer: "off" }}
-                      empty={
-                        <div className="mt-4 mb-10">
-                          <DocumentProperties />
-                        </div>
-                      }
-                    />
+                    <>
+                      <Selection
+                        config={{ position: "off", developer: "off" }}
+                        empty={
+                          <div className="mt-4 mb-10">
+                            <DocumentProperties />
+                          </div>
+                        }
+                      />
+                      <RhemaTextShadowSection />
+                    </>
                   ) : (
                     <div className="px-3 py-3 space-y-2 text-xs">
                       <div className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground mb-1">

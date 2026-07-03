@@ -451,7 +451,10 @@ function FeProgressiveBlurProperties({
   );
 }
 
-function FeShadowProperties({
+// Exported for the Rhema (bible-helper) text panel, which surfaces this
+// same properties editor inline (see playground.tsx RhemaTextShadowSection)
+// instead of only behind the Effects row's popover trigger.
+export function FeShadowProperties({
   value,
   onValueChange,
 }: {
