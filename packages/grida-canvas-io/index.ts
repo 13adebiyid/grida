@@ -1302,7 +1302,12 @@ export namespace io {
       // NOTE: images are stored under a directory and addressed by filename.
       // We keep these as methods (not union keys) because OPFS directory entries
       // are not single files.
-      "document.grida" | "document.grida1" | "thumbnail.png";
+      | "document.grida"
+      | "document.grida1"
+      // Crash-restore draft: the live document's JSON snapshot, debounce-
+      // written on edits and cleared on every explicit Save (bible-helper).
+      | "document.draft.grida1"
+      | "thumbnail.png";
 
     /**
      * File handle interface for OPFS file operations.
@@ -1573,8 +1578,14 @@ export namespace io {
           create: true,
         });
 
-        // Move each known document file (best-effort per file).
-        const keys: FileKey[] = ["document.grida", "document.grida1"];
+        // Move each known document file (best-effort per file). The
+        // crash-restore draft moves with its document generation — left
+        // behind it would feed the restore prompt a stale-schema snapshot.
+        const keys: FileKey[] = [
+          "document.grida",
+          "document.grida1",
+          "document.draft.grida1",
+        ];
         for (const key of keys) {
           try {
             const srcHandle = await dir.getFileHandle(key);

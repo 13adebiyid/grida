@@ -434,7 +434,11 @@ function usePlaygroundOPFS(filekey: string): io.opfs.Handle | null {
   }, [filekey]);
 }
 
-function usePlaygroundDirtyFlag(instance: Editor, enabled: boolean) {
+function usePlaygroundDirtyFlag(
+  instance: Editor,
+  enabled: boolean,
+  suppressRef?: React.MutableRefObject<number>
+) {
   const [dirty, setDirty] = useState(false);
 
   const markSaved = useCallback(() => {
@@ -459,12 +463,15 @@ function usePlaygroundDirtyFlag(instance: Editor, enabled: boolean) {
           setDirty(false);
           return;
         }
+        // Programmatic seed reconstruction is not an operator edit — an
+        // untouched seeded session must not trigger confirm-before-discard.
+        if (suppressRef && suppressRef.current > 0) return;
         setDirty(true);
       }
     );
 
     return unsubscribe;
-  }, [enabled, instance]);
+  }, [enabled, instance, suppressRef]);
 
   return { dirty, markSaved };
 }
@@ -655,6 +662,15 @@ export default function CanvasPlayground({
     () => new Set()
   );
   const opfs = usePlaygroundOPFS(resolvedFilekey);
+  // Guards the crash-restore draft and the dirty flag against the seed
+  // hook's programmatic mutations (createImage/insert/mv during backdrop
+  // reconstruction are NOT operator edits). Without this, every seeded open
+  // writes a draft 1.2s later and the next open re-offers LAST session's
+  // seed via "Restore unsaved changes?" — the sticky-stale-seed failure.
+  // A counter (not a boolean) so overlapping runs can't unmask early; the
+  // suppression window also swallows an operator edit racing the (short,
+  // load-time) reconstruction — accepted: the next edit re-arms both.
+  const seedApplyingRef = useRef(0);
   // Track document dirtiness for Bible Helper sessions too (NOT just when
   // warnOnUnsavedChanges is set) so the host can confirm-before-discard on a
   // graceful editor close. The beforeunload guard below stays gated on
@@ -662,7 +678,8 @@ export default function CanvasPlayground({
   // iframe beforeunload prompt for BH.
   const { dirty, markSaved } = usePlaygroundDirtyFlag(
     instance,
-    warnOnUnsavedChanges || profile === "bible-helper"
+    warnOnUnsavedChanges || profile === "bible-helper",
+    seedApplyingRef
   );
   const [documentReady, setDocumentReady] = useState(() => !src);
   const [canvasReady, setCanvasReady] = useState(false);
@@ -754,10 +771,13 @@ export default function CanvasPlayground({
     let timer: ReturnType<typeof setTimeout> | null = null;
     const writeDraft = () => {
       try {
-        const dir = editor.archivedir();
+        // The draft is the JSON snapshot ONLY — image BYTES stay in the
+        // WASM heap (restore re-inits from the snapshot; refs resolve via
+        // the room's persisted images). Do NOT call instance.archivedir()
+        // here: it copies every photo's bytes out of WASM per tick.
         const json = io.snapshot.stringify({
           version: undefined,
-          document: dir.document,
+          document: instance.getSnapshot().document,
         });
         void opfs
           .get("document.draft.grida1")
@@ -770,6 +790,7 @@ export default function CanvasPlayground({
       (state) => state.document,
       (_store, _next, _prev, action) => {
         if (action?.type === "document/reset") return; // load/init, not an edit
+        if (seedApplyingRef.current > 0) return; // seed reconstruction, not an edit
         if (timer) clearTimeout(timer);
         timer = setTimeout(writeDraft, 1200);
       }
@@ -778,7 +799,7 @@ export default function CanvasPlayground({
       if (timer) clearTimeout(timer);
       unsubscribe();
     };
-  }, [profile, opfs, instance, editor]);
+  }, [profile, opfs, instance]);
 
   // Crash-restore: after the saved document loads, if a draft from an
   // interrupted session survived, offer to restore it (once per mount). The
@@ -1216,6 +1237,10 @@ export default function CanvasPlayground({
     if (!pendingSeedBackdrop || !canvasReady) return;
     let cancelled = false;
     const { svg, stageId } = pendingSeedBackdrop;
+    // Every dispatch below is programmatic reconstruction, not an operator
+    // edit — suppress the crash-restore draft and the dirty flag for the
+    // duration (see seedApplyingRef).
+    seedApplyingRef.current += 1;
     void (async () => {
       try {
         const { images, remainderSvg } = extractBackdropImagesForSeed(svg);
@@ -1275,6 +1300,7 @@ export default function CanvasPlayground({
           backdropError
         );
       } finally {
+        seedApplyingRef.current -= 1;
         if (!cancelled) setPendingSeedBackdrop(null);
       }
     })();
@@ -1918,6 +1944,10 @@ const ENABLE_LIVE_THUMBNAILS: boolean = true;
 // and retry capture with backoff until the WASM exporter binds on a cold load.
 const EXPORT_TIMEOUT_MS = 8000;
 const READINESS_RETRY_DELAYS_MS: number[] = [120, 240, 480, 960, 1920, 3000];
+// Trailing debounce for edit-driven re-captures. Deliberately long: each
+// capture is a full WASM rasterization + PNG encode of the stage (photos
+// included) on the shared main thread — it must never ride the edit cadence.
+const EDIT_RECAPTURE_DEBOUNCE_MS = 3000;
 
 /**
  * Composite a (possibly transparent) PNG byte array onto an opaque black
@@ -1973,8 +2003,6 @@ function SceneThumbnailProvider({
 
   const sceneId = useEditorState(editor, (s) => s.scene_id);
   const scenesRef = useEditorState(editor, (s) => s.document.scenes_ref);
-  // Reference changes on document edits (Grida replaces the document on update).
-  const docRef = useEditorState(editor, (s) => s.document);
 
   // Capture via the supported offscreen exporter (Grida's useSlideThumbnail
   // pattern): exportNodeAs PNG -> Blob URL. The current WASM/CDN runtime ships
@@ -2137,17 +2165,33 @@ function SceneThumbnailProvider({
   }, [sceneId, enabled, scheduleCapture]);
 
   // (2) Debounced re-capture of the active scene on document edits.
+  // Subscribes to document mutations directly (Object.is on the document
+  // reference — cheap) instead of selecting `s.document` through
+  // useEditorState, whose default deep-equal re-compared the WHOLE document
+  // on every dispatch. Trailing debounce: continuous editing postpones the
+  // capture entirely; it runs EDIT_RECAPTURE_DEBOUNCE_MS after the pause.
   useEffect(() => {
-    if (!enabled || !sceneId) return;
+    if (!enabled) return;
     let cancelSchedule: (() => void) | null = null;
-    const t = setTimeout(() => {
-      cancelSchedule = scheduleCapture(sceneId);
-    }, 500);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = editor.doc.subscribeWithSelector(
+      (s) => s.document,
+      () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          const activeSceneId = editor.state.scene_id;
+          if (!activeSceneId) return;
+          cancelSchedule?.();
+          cancelSchedule = scheduleCapture(activeSceneId);
+        }, EDIT_RECAPTURE_DEBOUNCE_MS);
+      }
+    );
     return () => {
-      clearTimeout(t);
+      unsubscribe();
+      if (timer) clearTimeout(timer);
       cancelSchedule?.();
     };
-  }, [docRef, sceneId, enabled, scheduleCapture]);
+  }, [editor, enabled, scheduleCapture]);
 
   // Prune cache when scenes are removed (revoking their object URLs first).
   useEffect(() => {
@@ -2457,6 +2501,11 @@ function SidebarLeft({
         await opfs
           .get("document.grida1")
           .write(new TextEncoder().encode(snapshotJson));
+        // Item 6a: the just-saved state is canonical, so the crash-restore
+        // draft is stale — clear it (mirrors the single-theme save; without
+        // this every bundle save leaves a pre-save draft that the next open
+        // offers to "restore").
+        await opfs.get("document.draft.grida1").write(new Uint8Array(0));
       } catch (err) {
         console.error("[themes-temp:diag] OPFS persist failed (bundle)", err);
         toast.warning(
