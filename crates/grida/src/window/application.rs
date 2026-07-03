@@ -891,13 +891,7 @@ impl ApplicationApi for UnknownTargetApplication {
         use crate::runtime::invalidation::{diff_node, ChangeKind};
         let kind = old_node_for_diff
             .as_ref()
-            .and_then(|old| {
-                scene
-                    .graph
-                    .get_node(&internal_id)
-                    .ok()
-                    .map(|new| (old, new))
-            })
+            .zip(scene.graph.get_node(&internal_id).ok())
             .map(|(old, new)| diff_node(old, new))
             .unwrap_or(ChangeKind::Full);
 

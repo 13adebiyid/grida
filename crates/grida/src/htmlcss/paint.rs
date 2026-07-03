@@ -2778,24 +2778,22 @@ fn paint_widget_background(canvas: &Canvas, style: &StyledElement, w: f32, h: f3
                 );
             }
         }
-        WidgetAppearance::Menulist { disabled, .. } => {
-            if !has_border {
-                let mut paint = Paint::default();
-                paint.set_style(PaintStyle::Stroke);
-                paint.set_stroke_width(1.0);
-                paint.set_color(if *disabled {
-                    DISABLED_BORDER
-                } else {
-                    BORDER_COLOR
-                });
-                paint.set_anti_alias(true);
-                canvas.draw_round_rect(
-                    Rect::from_xywh(0.5, 0.5, w - 1.0, h - 1.0),
-                    2.0,
-                    2.0,
-                    &paint,
-                );
-            }
+        WidgetAppearance::Menulist { disabled, .. } if !has_border => {
+            let mut paint = Paint::default();
+            paint.set_style(PaintStyle::Stroke);
+            paint.set_stroke_width(1.0);
+            paint.set_color(if *disabled {
+                DISABLED_BORDER
+            } else {
+                BORDER_COLOR
+            });
+            paint.set_anti_alias(true);
+            canvas.draw_round_rect(
+                Rect::from_xywh(0.5, 0.5, w - 1.0, h - 1.0),
+                2.0,
+                2.0,
+                &paint,
+            );
         }
         _ => {} // checkbox, radio, slider, color — no background phase needed
     }

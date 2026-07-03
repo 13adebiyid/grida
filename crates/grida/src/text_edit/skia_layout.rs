@@ -1218,7 +1218,7 @@ impl SkiaLayoutEngine {
             let run_start = run.start as usize;
             let run_end = run.end as usize;
             // Clip to [0..cursor)
-            let s = run_start.max(0).min(cursor);
+            let s = run_start.min(cursor);
             let e = run_end.min(cursor);
             if s >= e {
                 continue;

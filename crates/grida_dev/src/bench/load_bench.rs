@@ -317,7 +317,7 @@ fn layout_diff(scene: &Scene, width: i32, height: i32, threshold: f32) {
         }
         println!("\n  By node type:");
         let mut type_vec: Vec<_> = type_counts.into_iter().collect();
-        type_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        type_vec.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
         for (t, count) in &type_vec {
             println!("    {}: {}", t, count);
         }
@@ -349,7 +349,7 @@ fn layout_diff(scene: &Scene, width: i32, height: i32, threshold: f32) {
         }
         println!("  By parent type:");
         let mut parent_vec: Vec<_> = parent_counts.into_iter().collect();
-        parent_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        parent_vec.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
         for (p, count) in &parent_vec {
             println!("    {}: {}", p, count);
         }

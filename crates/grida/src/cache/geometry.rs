@@ -638,10 +638,7 @@ impl GeometryCache {
             std::collections::HashSet::with_capacity(roots.len());
         for &root in roots {
             let mut cur = root;
-            loop {
-                let Some(parent) = self.entries.get(&cur).and_then(|e| e.parent) else {
-                    break;
-                };
+            while let Some(parent) = self.entries.get(&cur).and_then(|e| e.parent) {
                 let Some(parent_geo) = schema_geo.get(&parent) else {
                     break;
                 };
