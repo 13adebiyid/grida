@@ -61,7 +61,31 @@ function __get_rhema_stage_id(state: editor.state.IEditorState): string | null {
   const userdata = sceneMeta?.userdata as Record<string, unknown> | undefined;
   if (userdata?.rhema_profile !== "bible-helper") return null;
   const stageId = userdata?.rhema_stage_node_id;
-  return typeof stageId === "string" ? stageId : null;
+  if (typeof stageId !== "string") return null;
+  // VALIDATE before trusting: deleting the stage container leaves this
+  // userdata pointing at a dead id (node deletion never touches scene
+  // metadata), and inserting into a dead target throws deep in the insert
+  // reducer — the operator-reported error-boundary crash after a stage
+  // delete. Mirror the checks getRhemaStage (use-data-transfer.ts) does:
+  // node exists, is a scene child, and is a stage-shaped container.
+  const node = state.document.nodes[stageId] as
+    | {
+        type?: string;
+        name?: string;
+        layout_target_width?: unknown;
+        layout_target_height?: unknown;
+      }
+    | undefined;
+  if (!node || node.type !== "container") return null;
+  const sceneChildren = state.document.links[scene_id] ?? [];
+  if (!sceneChildren.includes(stageId)) return null;
+  const looksLikeStage =
+    node.name === "Canvas 1920x1080" ||
+    (typeof node.layout_target_width === "number" &&
+      typeof node.layout_target_height === "number" &&
+      node.layout_target_width >= 1280 &&
+      node.layout_target_height >= 720);
+  return looksLikeStage ? stageId : null;
 }
 
 function __self_evt_on_pointer_move(

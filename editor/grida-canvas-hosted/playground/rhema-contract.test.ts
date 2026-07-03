@@ -263,3 +263,85 @@ describe("materializeRhemaThemeDocument (inverse of buildRhemaThemeRuntimeJson)"
     expect(tspan?.text).toBe("Lyric Body");
   });
 });
+
+// --- extractBackdropImagesForSeed ---------------------------------------
+// The wasm SVG import pipeline DROPS <image> nodes (usvg import TODO), so a
+// seeded picture theme lost its photo in the editor and the next save
+// deleted it from the theme permanently. The seed hook now extracts every
+// embedded photo (original encoded bytes preserved) plus its stage-space
+// geometry BEFORE createNodeFromSvg, and rebuilds them as native
+// image-fill rectangles.
+import { extractBackdropImagesForSeed } from "./rhema-contract";
+
+const PNG_URI = "data:image/png;base64,aGVsbG8=";
+const JPG_URI = "data:image/jpeg;base64,d29ybGQ=";
+
+describe("extractBackdropImagesForSeed", () => {
+  it("extracts the fit-aware export shape (defs image + clip + use transform)", () => {
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1920" height="1080">` +
+      `<defs><image id="img_0" width="4000" height="2250" xlink:href="${PNG_URI}"/></defs>` +
+      `<clipPath id="cl_1"><rect width="1920" height="1080"/></clipPath>` +
+      `<g clip-path="url(#cl_1)"><use transform="matrix(0.48 0 0 0.48 0 -1.5)" xlink:href="#img_0"/></g>` +
+      `</svg>`;
+    const { images, remainderSvg } = extractBackdropImagesForSeed(svg);
+    expect(images.length).toBe(1);
+    expect(images[0].dataUri).toBe(PNG_URI);
+    expect(images[0].fit).toBe("fill");
+    expect(images[0].rect.x).toBeCloseTo(0);
+    expect(images[0].rect.y).toBeCloseTo(-1.5);
+    expect(images[0].rect.width).toBeCloseTo(4000 * 0.48);
+    expect(images[0].rect.height).toBeCloseTo(2250 * 0.48);
+    // Nothing paintable left — remainder suppressed entirely.
+    expect(remainderSvg).toBe(null);
+  });
+
+  it("extracts the legacy pattern shape as a cover-fit rect", () => {
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080">` +
+      `<defs><pattern id="pattern_0" patternUnits="userSpaceOnUse" width="100%" height="100%" x="0" y="0">` +
+      `<image id="img_0" x="0" y="0" width="4000" height="2250" xlink:href="${JPG_URI}"/>` +
+      `</pattern></defs>` +
+      `<rect fill="url(#pattern_0)" width="1920" height="1080"/>` +
+      `</svg>`;
+    const { images, remainderSvg } = extractBackdropImagesForSeed(svg);
+    expect(images.length).toBe(1);
+    expect(images[0].dataUri).toBe(JPG_URI);
+    expect(images[0].fit).toBe("cover");
+    expect(images[0].rect).toEqual({ x: 0, y: 0, width: 1920, height: 1080 });
+    expect(remainderSvg).toBe(null);
+  });
+
+  it("keeps non-image content as the remainder", () => {
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080">` +
+      `<defs><image id="img_0" width="100" height="100" xlink:href="${PNG_URI}"/></defs>` +
+      `<g clip-path="url(#c)"><use transform="matrix(1 0 0 1 10 20)" xlink:href="#img_0"/></g>` +
+      `<path d="M0 0L10 10" fill="#fff"/>` +
+      `</svg>`;
+    const { images, remainderSvg } = extractBackdropImagesForSeed(svg);
+    expect(images.length).toBe(1);
+    expect(images[0].rect).toEqual({ x: 10, y: 20, width: 100, height: 100 });
+    expect(remainderSvg).not.toBe(null);
+    expect(remainderSvg!.includes("<path")).toBe(true);
+    expect(remainderSvg!.includes("base64")).toBe(false);
+  });
+
+  it("bails out (no extraction) on rotated/skewed use transforms", () => {
+    const svg =
+      `<svg width="100" height="100">` +
+      `<defs><image id="img_0" width="10" height="10" href="${PNG_URI}"/></defs>` +
+      `<use transform="matrix(0.7 0.7 -0.7 0.7 0 0)" href="#img_0"/>` +
+      `</svg>`;
+    const { images, remainderSvg } = extractBackdropImagesForSeed(svg);
+    expect(images.length).toBe(0);
+    expect(remainderSvg).toBe(svg);
+  });
+
+  it("passes through svgs without images untouched", () => {
+    const svg = `<svg width="10" height="10"><rect width="5" height="5"/></svg>`;
+    const { images, remainderSvg } = extractBackdropImagesForSeed(svg);
+    expect(images.length).toBe(0);
+    expect(remainderSvg).toBe(svg);
+  });
+});

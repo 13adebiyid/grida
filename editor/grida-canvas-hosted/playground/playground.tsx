@@ -154,6 +154,7 @@ import { saveAs } from "file-saver";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
 import {
   buildRhemaThemeRuntimeJson,
+  extractBackdropImagesForSeed,
   materializeRhemaThemeDocument,
   stripTextFromSvg,
   RHEMA_BUNDLE_NAME_KEY,
@@ -1099,17 +1100,71 @@ export default function CanvasPlayground({
   ]);
 
   // Reconstruct a seeded theme's backdrop once the canvas surface (and its SVG
-  // decoder) has bound. createNodeFromSvg is the inverse of the save's SVG
-  // export; mv reparents it under the stage as the first child (behind text).
+  // decoder) has bound.
+  //
+  // Embedded PHOTOS are extracted FIRST and rebuilt as native image-fill
+  // rectangles (original encoded bytes registered via createImage): the wasm
+  // SVG import pipeline drops <image> nodes entirely, so feeding a picture
+  // backdrop through createNodeFromSvg lost the photo in the editor AND the
+  // next save deleted it from the theme permanently. Whatever paintable
+  // content remains (shapes/paths) still goes through createNodeFromSvg as
+  // before; everything is reparented under the stage behind the text layers.
   useEffect(() => {
     if (!pendingSeedBackdrop || !canvasReady) return;
     let cancelled = false;
     const { svg, stageId } = pendingSeedBackdrop;
     void (async () => {
       try {
-        const backdrop = await instance.commands.createNodeFromSvg(svg);
-        if (!cancelled && backdrop?.id) {
-          instance.commands.mv([backdrop.id], stageId, 0);
+        const { images, remainderSvg } = extractBackdropImagesForSeed(svg);
+        const orderedIds: string[] = [];
+        for (const img of images) {
+          const base64 = img.dataUri.replace(/^data:[^;]+;base64,/, "");
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++)
+            bytes[i] = binary.charCodeAt(i);
+          const ref = await instance.createImage(bytes);
+          if (cancelled) return;
+          const inserted = instance.insert(
+            {
+              prototype: {
+                type: "rectangle",
+                name: "Backdrop image",
+                layout_positioning: "absolute",
+                layout_inset_left: Math.round(img.rect.x),
+                layout_inset_top: Math.round(img.rect.y),
+                layout_target_width: Math.max(1, Math.round(img.rect.width)),
+                layout_target_height: Math.max(1, Math.round(img.rect.height)),
+                fill: {
+                  type: "solid",
+                  color: kolor.colorformats.RGBA32F.fromHEX("#00000000"),
+                  active: false,
+                },
+                fill_paints: [
+                  {
+                    type: "image",
+                    src: ref.url,
+                    fit: img.fit,
+                    transform: cmath.transform.identity,
+                    filters: cg.def.IMAGE_FILTERS,
+                    blend_mode: cg.def.BLENDMODE,
+                    opacity: 1,
+                    active: true,
+                  } satisfies cg.ImagePaint,
+                ],
+              },
+            },
+            stageId
+          );
+          if (inserted[0]) orderedIds.push(inserted[0]);
+        }
+        if (remainderSvg) {
+          const backdrop =
+            await instance.commands.createNodeFromSvg(remainderSvg);
+          if (backdrop?.id) orderedIds.push(backdrop.id);
+        }
+        if (!cancelled && orderedIds.length > 0) {
+          instance.commands.mv(orderedIds, stageId, 0);
         }
       } catch (backdropError) {
         console.warn(

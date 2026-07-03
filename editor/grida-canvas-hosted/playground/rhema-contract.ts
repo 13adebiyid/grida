@@ -179,6 +179,9 @@ export type RhemaThemeRuntimeJson = {
     id: string;
     name: string;
   };
+  /** Present on SEED replies for bundle-hosted layouts: the bundle's name,
+   *  stamped back onto the scene so a re-save keeps it. */
+  bundleName?: string | null;
   stage: {
     width: number;
     height: number;
@@ -1083,6 +1086,256 @@ function parseTextShadowToFeShadows(
   return out;
 }
 
+/** One embedded backdrop photo extracted for seed reconstruction. */
+export interface SeedBackdropImage {
+  /** Original encoded bytes, untouched (data URI as shipped by BH's seed
+   *  reply — inflate restores the operator's original JPEG/PNG bytes). */
+  dataUri: string;
+  /** Stage-space rect the image draw maps onto. */
+  rect: { x: number; y: number; width: number; height: number };
+  /** ImagePaint fit for the reconstructed rectangle. */
+  fit: "fill" | "cover";
+}
+
+function svgAttr(tag: string, name: string): string | null {
+  const m = tag.match(new RegExp(`(?:^|\\s)(?:xlink:)?${name}="([^"]*)"`));
+  return m ? m[1] : null;
+}
+
+function svgNumAttr(tag: string, name: string): number | null {
+  const raw = svgAttr(tag, name);
+  if (raw === null) return null;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Extract embedded photos (plus their stage-space geometry) from a backdrop
+ * SVG BEFORE it is fed to `createNodeFromSvg`.
+ *
+ * Why: the wasm SVG import pipeline currently DROPS `<image>` nodes (usvg
+ * import TODO in crates/grida/src/import/svg/packed_scene.rs), so a seeded
+ * picture theme lost its photo in the editor — and because the next save
+ * re-exports whatever the document holds, the photo was then permanently
+ * deleted from the theme. The seed hook rebuilds extracted photos as native
+ * image-fill rectangles (original encoded bytes registered via
+ * `createImage`), which round-trip through the save exporter.
+ *
+ * Recognized shapes — both are OUR OWN exporter's output, not arbitrary SVG:
+ *  - fit-aware export (2026-07-03+): `<defs><image .../></defs>` +
+ *    `<use transform="matrix(a 0 0 d e f)" href="#img"/>` → rect at
+ *    (e, f, a*W, d*H), fit "fill" (the matrix bakes the operator's fit).
+ *  - legacy pattern export: `<pattern><image/></pattern>` +
+ *    `<rect fill="url(#pattern)"/>` → the rect's geometry, fit "cover"
+ *    (the semantic normalizeBackdropImageFit heals this shape to).
+ *  - a direct `<image x y width height/>` outside defs → its own geometry,
+ *    fit "fill".
+ *
+ * FAIL-CLOSED: any unrecognized construct (rotated/skewed matrices,
+ * non-data-URI hrefs, images with no draw site) bails with NO extraction so
+ * the previous behavior (whole SVG through createNodeFromSvg) is preserved.
+ */
+export function extractBackdropImagesForSeed(svg: string): {
+  images: SeedBackdropImage[];
+  /** SVG with the extracted image carriers removed; null when nothing
+   *  paintable remains (skip createNodeFromSvg entirely). */
+  remainderSvg: string | null;
+} {
+  const noExtraction = { images: [], remainderSvg: svg } as const;
+  if (!svg || !svg.includes("<image")) return noExtraction;
+
+  const rootTag = svg.match(/<svg\b[^>]*>/)?.[0] ?? "";
+  const rootW = svgNumAttr(rootTag, "width");
+  const rootH = svgNumAttr(rootTag, "height");
+  const resolveLen = (
+    raw: string | null,
+    base: number | null
+  ): number | null => {
+    if (raw === null) return null;
+    if (raw.endsWith("%")) {
+      if (base === null) return null;
+      const pct = Number.parseFloat(raw);
+      return Number.isFinite(pct) ? (pct / 100) * base : null;
+    }
+    const n = Number.parseFloat(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  // ── collect every <image> tag with its span ──────────────────────────
+  interface ImgTag {
+    tag: string;
+    start: number;
+    end: number;
+    id: string | null;
+    dataUri: string;
+    w: number;
+    h: number;
+  }
+  const imgTags: ImgTag[] = [];
+  const imgRe = /<image\b[^>]*\/?>/g;
+  for (let m = imgRe.exec(svg); m; m = imgRe.exec(svg)) {
+    const tag = m[0];
+    const href = svgAttr(tag, "href");
+    const w = svgNumAttr(tag, "width");
+    const h = svgNumAttr(tag, "height");
+    if (!href || !href.startsWith("data:image/") || w === null || h === null) {
+      return noExtraction; // unrecognized image — fail closed
+    }
+    imgTags.push({
+      tag,
+      start: m.index,
+      end: m.index + tag.length,
+      id: tag.match(/(?:^|\s)id="([^"]*)"/)?.[1] ?? null,
+      dataUri: href,
+      w,
+      h,
+    });
+  }
+  if (imgTags.length === 0) return noExtraction;
+
+  // Spans consumed by extraction (removed from the remainder).
+  const consumed: Array<{ start: number; end: number }> = [];
+  const found: Array<SeedBackdropImage & { order: number }> = [];
+  const usedImg = new Set<ImgTag>();
+
+  // ── pattern blocks (legacy shape) ─────────────────────────────────────
+  const patternRe = /<pattern\b[^>]*>[\s\S]*?<\/pattern>/g;
+  for (let m = patternRe.exec(svg); m; m = patternRe.exec(svg)) {
+    const block = m[0];
+    const inner = imgTags.find(
+      (t) => t.start > m.index && t.end < m.index + block.length
+    );
+    if (!inner) continue;
+    const patternId = block.match(/<pattern\b[^>]*?(?:^|\s)id="([^"]*)"/)?.[1];
+    if (!patternId) return noExtraction;
+    // The rect painted with this pattern.
+    const rectRe = new RegExp(
+      `<rect\\b[^>]*fill="url\\(#${patternId}\\)"[^>]*\\/?>`
+    );
+    const rectMatch = svg.match(rectRe);
+    if (!rectMatch || rectMatch.index === undefined) return noExtraction;
+    const rectTag = rectMatch[0];
+    const w = resolveLen(svgAttr(rectTag, "width"), rootW);
+    const h = resolveLen(svgAttr(rectTag, "height"), rootH);
+    if (w === null || h === null) return noExtraction;
+    found.push({
+      order: rectMatch.index,
+      dataUri: inner.dataUri,
+      rect: {
+        x: svgNumAttr(rectTag, "x") ?? 0,
+        y: svgNumAttr(rectTag, "y") ?? 0,
+        width: w,
+        height: h,
+      },
+      fit: "cover",
+    });
+    usedImg.add(inner);
+    consumed.push({ start: m.index, end: m.index + block.length });
+    consumed.push({
+      start: rectMatch.index,
+      end: rectMatch.index + rectTag.length,
+    });
+  }
+
+  // ── <use> references (fit-aware shape) ────────────────────────────────
+  const useRe = /<use\b[^>]*\/?>/g;
+  for (let m = useRe.exec(svg); m; m = useRe.exec(svg)) {
+    const tag = m[0];
+    const ref = svgAttr(tag, "href");
+    if (!ref || !ref.startsWith("#")) continue;
+    const img = imgTags.find((t) => t.id === ref.slice(1));
+    if (!img || usedImg.has(img)) continue;
+    const transform = svgAttr(tag, "transform");
+    let a = 1,
+      b = 0,
+      c = 0,
+      d = 1,
+      e = 0,
+      f = 0;
+    if (transform) {
+      const nums = transform
+        .match(/matrix\(([^)]+)\)/)?.[1]
+        ?.split(/[\s,]+/)
+        .filter(Boolean)
+        .map(Number);
+      if (!nums || nums.length !== 6 || nums.some((n) => !Number.isFinite(n))) {
+        return noExtraction;
+      }
+      [a, b, c, d, e, f] = nums;
+    }
+    // Only axis-aligned, non-flipped placements are reconstructable as a
+    // plain rect — anything else fails closed.
+    if (Math.abs(b) > 1e-6 || Math.abs(c) > 1e-6 || a <= 0 || d <= 0) {
+      return noExtraction;
+    }
+    found.push({
+      order: m.index,
+      dataUri: img.dataUri,
+      rect: { x: e, y: f, width: a * img.w, height: d * img.h },
+      fit: "fill",
+    });
+    usedImg.add(img);
+    consumed.push({ start: img.start, end: img.end });
+    consumed.push({ start: m.index, end: m.index + tag.length });
+  }
+
+  // ── direct <image> draws (outside defs/pattern, unreferenced) ─────────
+  const defsSpans: Array<{ start: number; end: number }> = [];
+  const defsRe = /<defs\b[^>]*>[\s\S]*?<\/defs>/g;
+  for (let m = defsRe.exec(svg); m; m = defsRe.exec(svg)) {
+    defsSpans.push({ start: m.index, end: m.index + m[0].length });
+  }
+  for (const img of imgTags) {
+    if (usedImg.has(img)) continue;
+    const inDefs = defsSpans.some(
+      (s) => img.start >= s.start && img.end <= s.end
+    );
+    if (inDefs) return noExtraction; // defs image nothing referenced — unknown construct
+    found.push({
+      order: img.start,
+      dataUri: img.dataUri,
+      rect: {
+        x: svgNumAttr(img.tag, "x") ?? 0,
+        y: svgNumAttr(img.tag, "y") ?? 0,
+        width: img.w,
+        height: img.h,
+      },
+      fit: "fill",
+    });
+    usedImg.add(img);
+    consumed.push({ start: img.start, end: img.end });
+  }
+
+  if (found.length === 0) return noExtraction;
+
+  // ── build the remainder ───────────────────────────────────────────────
+  consumed.sort((x, y) => x.start - y.start);
+  let remainder = "";
+  let cursor = 0;
+  for (const span of consumed) {
+    if (span.start < cursor) continue; // nested/overlapping — already removed
+    remainder += svg.slice(cursor, span.start);
+    cursor = span.end;
+  }
+  remainder += svg.slice(cursor);
+  remainder = remainder.replace(/<defs\b[^>]*>\s*<\/defs>/g, "");
+
+  // Paintable check: anything visible left outside defs/clipPath?
+  const probe = remainder
+    .replace(/<defs\b[^>]*>[\s\S]*?<\/defs>/g, "")
+    .replace(/<clipPath\b[^>]*>[\s\S]*?<\/clipPath>/g, "");
+  const paintable =
+    /<(path|rect|circle|ellipse|polygon|polyline|line|text|image|foreignObject)\b/.test(
+      probe
+    );
+
+  found.sort((x, y) => x.order - y.order);
+  return {
+    images: found.map(({ order: _order, ...img }) => img),
+    remainderSvg: paintable ? remainder : null,
+  };
+}
+
 export function materializeRhemaThemeDocument(theme: RhemaThemeRuntimeJson): {
   document: grida.program.document.Document;
   sceneId: string;
@@ -1090,7 +1343,16 @@ export function materializeRhemaThemeDocument(theme: RhemaThemeRuntimeJson): {
    *  backdrop under it (behind the text) so it round-trips on the next save. */
   stageId: string;
 } {
-  const sceneId = "main";
+  // Honor the seed reply's scene id: BH resolves bundle rooms to the
+  // DECOMPOSED scene id, and a bundle-layout room materialized as "main"
+  // would mis-file its first save (single-scene doc overwriting the bundle
+  // room's OPFS). Flat/builtin themes reply their own id, which the save
+  // flow treats identically to "main".
+  const replySceneId =
+    typeof theme.scene?.id === "string" && theme.scene.id.trim()
+      ? theme.scene.id.trim()
+      : null;
+  const sceneId = replySceneId ?? "main";
   const stageId = "rhema-stage";
   const stageWidth = theme.stage?.width ?? 1920;
   const stageHeight = theme.stage?.height ?? 1080;
@@ -1233,7 +1495,17 @@ export function materializeRhemaThemeDocument(theme: RhemaThemeRuntimeJson): {
   const sceneUserdata: Record<string, unknown> = {
     [RHEMA_WORKSPACE_KEY]: theme.workspace ?? "theme",
     [RHEMA_REFERENCE_INCLUDE_VERSION_KEY]: bindings.includeVersionInReference,
+    // First-class Rhema markers, matching what getRhemaStage stamps when it
+    // creates a stage: WITHOUT rhema_profile the insert reducer's
+    // auto-placement skip never engages on a SEEDED document, so anything
+    // the operator inserted (photos, shapes) was packer-displaced.
+    rhema_profile: "bible-helper",
+    rhema_lock_to_stage: true,
+    rhema_stage_node_id: stageId,
   };
+  if (typeof theme.bundleName === "string" && theme.bundleName.trim()) {
+    sceneUserdata[RHEMA_BUNDLE_NAME_KEY] = theme.bundleName.trim();
+  }
   if (bindings.scriptureNodeId)
     sceneUserdata[RHEMA_SCRIPTURE_BINDING_KEY] = bindings.scriptureNodeId;
   if (bindings.referenceNodeId)
