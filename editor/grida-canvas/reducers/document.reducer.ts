@@ -853,14 +853,30 @@ export default function documentReducer<S extends editor.state.IEditorState>(
       // transform). So when inserting UNDER a container in a Bible-Helper scene,
       // skip auto-placement entirely and honor the prototype's exact inset —
       // the caller (e.g. insertImage) already centers media inside the stage.
-      const skipAutoPlacement =
-        action.target != null &&
+      //
+      // The Rhema STAGE CONTAINER itself is a ROOT insert (getRhemaStage
+      // re-creates it when the operator deleted it). It must land exactly at
+      // its prototype origin — a packer-displaced stage gives every subsequent
+      // stage-local insert an arbitrary offset (operator-reported 2026-07-03:
+      // re-created stage floated off-canvas and the inserted photo was clipped
+      // invisible). Recognized by its well-known name (const duplicated in
+      // use-data-transfer.ts / playground.tsx / stage-toolbar.tsx).
+      const is_bible_helper_scene =
         state.scene_id != null &&
         (
           state.document.metadata?.[state.scene_id]?.userdata as
             | Record<string, unknown>
             | undefined
         )?.rhema_profile === "bible-helper";
+      const sub_root_is_rhema_stage = sub.scene.children_refs.some(
+        (node_id) => {
+          const node = sub.nodes[node_id];
+          return node?.type === "container" && node.name === "Canvas 1920x1080";
+        }
+      );
+      const skipAutoPlacement =
+        (action.target != null && is_bible_helper_scene) ||
+        sub_root_is_rhema_stage;
 
       if (!skipAutoPlacement) {
         const box = getPackedSubtreeBoundingRect(sub);
@@ -925,7 +941,12 @@ export default function documentReducer<S extends editor.state.IEditorState>(
 
       const parent: string | null = action.target;
 
-      if (parent) {
+      // World -> parent-local conversion for the PACKER's placement. When
+      // auto-placement was skipped (Bible-Helper), the prototype's insets are
+      // parent-local BY CONTRACT (see insertImage) — subtracting the parent's
+      // absolute rect would corrupt them whenever the parent isn't at the
+      // world origin (the invisible-photo bug above).
+      if (parent && !skipAutoPlacement) {
         const parent_rect =
           context.geometry.getNodeAbsoluteBoundingRect(parent);
         if (parent_rect) {
