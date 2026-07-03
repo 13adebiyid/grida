@@ -1175,7 +1175,15 @@ export function materializeRhemaThemeDocument(theme: RhemaThemeRuntimeJson): {
         typeof frame.width === "number" ? frame.width : "auto",
       layout_target_height:
         typeof frame.height === "number" ? frame.height : "auto",
-      text: typeof layer.text === "string" ? layer.text : "",
+      // Empty design-time text (BH builtins ship "") would materialize an
+      // INVISIBLE node — the operator still perceives the "blank canvas" the
+      // seed exists to fix. Fall back to the layer name (Grida's own new-node
+      // convention is placeholder text); BH pours live content into these
+      // nodes by id at runtime, so design-time filler is inert.
+      text:
+        typeof layer.text === "string" && layer.text.trim()
+          ? layer.text
+          : (layer.name ?? "Text"),
       text_align: style.textAlign ?? "left",
       text_align_vertical: "top",
       stroke_align: "outside",

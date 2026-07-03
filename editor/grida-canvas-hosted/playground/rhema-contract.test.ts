@@ -237,4 +237,29 @@ describe("materializeRhemaThemeDocument (inverse of buildRhemaThemeRuntimeJson)"
       sourceTextNodeId: "scripture",
     });
   });
+
+  it("materializes a visible placeholder for empty design-time text (BH builtins)", () => {
+    const theme = {
+      scene: {
+        id: "builtin-lyric-default",
+        name: "Default Lyrics (Lower Third)",
+      },
+      stage: { width: 1920, height: 1080 },
+      textLayers: [
+        {
+          id: "lyric-body",
+          name: "Lyric Body",
+          text: "",
+          role: "scripture",
+          style: { color: "#ffffff", fontSize: 64 },
+          frame: { x: 160, y: 680, width: 1600, height: 340 },
+        },
+      ],
+    } as never;
+    const { document } = materializeRhemaThemeDocument(theme);
+    const tspan = Object.values(document.nodes).find(
+      (n: never) => (n as { type?: string }).type === "tspan"
+    ) as { text?: string };
+    expect(tspan?.text).toBe("Lyric Body");
+  });
 });
