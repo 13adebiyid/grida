@@ -1141,7 +1141,10 @@ export function extractBackdropImagesForSeed(svg: string): {
    *  paintable remains (skip createNodeFromSvg entirely). */
   remainderSvg: string | null;
 } {
-  const noExtraction = { images: [], remainderSvg: svg } as const;
+  const noExtraction: {
+    images: SeedBackdropImage[];
+    remainderSvg: string | null;
+  } = { images: [], remainderSvg: svg };
   if (!svg || !svg.includes("<image")) return noExtraction;
 
   const rootTag = svg.match(/<svg\b[^>]*>/)?.[0] ?? "";

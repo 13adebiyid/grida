@@ -240,19 +240,47 @@ const BIBLE_HELPER_SEED_RESULT_MESSAGE_TYPE = "bible-helper-seed-result";
  * requestId, and a bounded timeout so a non-responding host falls through to
  * the empty document rather than hanging the load.
  */
+export interface RhemaSeedDocument {
+  snapshotJson: string;
+  archiveBytes: ArrayBuffer;
+}
+
+export interface RhemaSeedResult {
+  theme: RhemaThemeRuntimeJson;
+  /** Pipeline-v2 (BH plan r3 section 5): the editor's own document as stored
+   *  by the LAST save — present only when BH loaded BOTH blobs. */
+  document: RhemaSeedDocument | null;
+}
+
+function parseSeedDocument(value: unknown): RhemaSeedDocument | null {
+  if (value === null || value === undefined || typeof value !== "object") {
+    return null;
+  }
+  const o = value as Record<string, unknown>;
+  if (
+    o.archiveBytes instanceof ArrayBuffer &&
+    o.archiveBytes.byteLength > 0 &&
+    typeof o.snapshotJson === "string" &&
+    o.snapshotJson.trim()
+  ) {
+    return { archiveBytes: o.archiveBytes, snapshotJson: o.snapshotJson };
+  }
+  return null;
+}
+
 function requestRhemaThemeSeed(
   parentOrigin: string,
   room: string,
   workspace: RhemaWorkspace,
   timeoutMs = 5000
-): Promise<RhemaThemeRuntimeJson | null> {
+): Promise<RhemaSeedResult | null> {
   if (typeof window === "undefined" || window.parent === window) {
     return Promise.resolve(null);
   }
   const requestId = `seed-${v4()}`;
-  return new Promise<RhemaThemeRuntimeJson | null>((resolve) => {
+  return new Promise<RhemaSeedResult | null>((resolve) => {
     let settled = false;
-    const finish = (value: RhemaThemeRuntimeJson | null) => {
+    const finish = (value: RhemaSeedResult | null) => {
       if (settled) return;
       settled = true;
       window.removeEventListener("message", onMessage);
@@ -263,7 +291,12 @@ function requestRhemaThemeSeed(
       if (e.origin !== parentOrigin || e.source !== window.parent) return;
       const d = e.data as {
         type?: unknown;
-        payload?: { requestId?: unknown; ok?: unknown; theme?: unknown };
+        payload?: {
+          requestId?: unknown;
+          ok?: unknown;
+          theme?: unknown;
+          document?: unknown;
+        };
       } | null;
       if (!d || d.type !== BIBLE_HELPER_SEED_RESULT_MESSAGE_TYPE) return;
       const p = d.payload ?? {};
@@ -272,7 +305,7 @@ function requestRhemaThemeSeed(
         p.ok === true && p.theme && typeof p.theme === "object"
           ? (p.theme as RhemaThemeRuntimeJson)
           : null;
-      finish(theme);
+      finish(theme ? { theme, document: parseSeedDocument(p.document) } : null);
     };
     const timer = setTimeout(() => finish(null), timeoutMs);
     window.addEventListener("message", onMessage);
@@ -284,6 +317,32 @@ function requestRhemaThemeSeed(
       parentOrigin
     );
   });
+}
+
+/**
+ * Pipeline-v2 (BH plan r3 section 3): the editor's own persisted document,
+ * attached to save payloads so BH stores it as the source of truth.
+ * Mirrors the OPFS persistence formats exactly: the archive zip carries the
+ * FBS document + image bytes; the JSON snapshot alone preserves scene
+ * userdata (the FBS format has no metadata table). Returns null on ANY
+ * failure — a save must never fail because archiving failed.
+ */
+function buildSaveDocumentPayload(
+  instance: Editor
+): { archiveBytes: ArrayBuffer; snapshotJson: string } | null {
+  try {
+    const dir = instance.archivedir();
+    const zipBytes = new Uint8Array(io.archive.pack(dir.document, dir.images));
+    const snapshotJson = io.snapshot.stringify({
+      version: undefined,
+      document: dir.document,
+    });
+    // Copy into a tight standalone ArrayBuffer so it is transferable.
+    return { archiveBytes: zipBytes.buffer as ArrayBuffer, snapshotJson };
+  } catch (err) {
+    console.warn("[bh-save] document attach skipped:", err);
+    return null;
+  }
 }
 
 function isRhemaStageCandidate(
@@ -1036,11 +1095,55 @@ export default function CanvasPlayground({
           room_id
         ) {
           try {
-            const seedTheme = await requestRhemaThemeSeed(
+            const seed = await requestRhemaThemeSeed(
               parentOrigin,
               room_id,
               workspace
             );
+            // Pipeline-v2 (plan section 5): when the reply carries the
+            // editor's own document, load it EXACTLY like the OPFS path
+            // (JSON snapshot for state incl. scene userdata; image bytes
+            // from the archive zip). ANY failure falls through to the v1
+            // materializer below — never a blank canvas.
+            if (seed?.document && !cancelled) {
+              try {
+                const snapshot = io.snapshot.parse(
+                  seed.document.snapshotJson
+                ) as { document?: unknown } | null;
+                if (!snapshot?.document) {
+                  throw new Error("seed snapshot has no document");
+                }
+                const unpacked = io.archive.unpack(
+                  new Uint8Array(seed.document.archiveBytes)
+                );
+                const seedImages: Record<string, Uint8Array> = {};
+                for (const [name, bytes] of Object.entries(unpacked.images)) {
+                  const base = name.split("/").pop() ?? name;
+                  const ref = base.includes(".") ? base.split(".")[0]! : base;
+                  seedImages[ref] = bytes;
+                }
+                instance.commands.reset(
+                  editor.state.init({
+                    editable: true,
+                    document: snapshot.document as Parameters<
+                      typeof editor.state.init
+                    >[0]["document"],
+                  }),
+                  "bh-seed-document"
+                );
+                if (Object.keys(seedImages).length > 0) {
+                  instance.loadImages(seedImages);
+                }
+                setDocumentReady(true);
+                return;
+              } catch (docError) {
+                console.warn(
+                  "[bh-seed] stored document load failed - falling back to the theme materializer:",
+                  docError
+                );
+              }
+            }
+            const seedTheme = seed?.theme ?? null;
             if (seedTheme && !cancelled) {
               const { document: seededDocument, stageId } =
                 materializeRhemaThemeDocument(seedTheme);
@@ -2287,12 +2390,22 @@ function SidebarLeft({
         : BIBLE_HELPER_THEME_SAVE_MESSAGE_TYPE;
     const savedLabel = workspace === "slide" ? "Slide" : "Theme";
     if (window.parent && window.parent !== window) {
+      // Pipeline-v2 (BH plan r3 section 3): attach the editor's OWN document
+      // (archive zip + userdata-preserving JSON snapshot) so BH stores it as
+      // the source of truth — reopen loads it exactly like OPFS instead of
+      // reverse-engineering the export. archivedir() throws when the WASM
+      // runtime can't supply image bytes; a save must NEVER fail because
+      // archiving failed, so this degrades to a pure v1 payload.
+      const documentPayload = buildSaveDocumentPayload(editor);
       window.parent.postMessage(
         {
           type: messageType,
-          payload,
+          payload: documentPayload
+            ? { ...payload, document: documentPayload }
+            : payload,
         },
-        parentOrigin
+        parentOrigin,
+        documentPayload ? [documentPayload.archiveBytes] : []
       );
       toast.success(
         `Saved ${savedLabel} "${payload.scene.name}" to Bible Helper.`
@@ -2453,12 +2566,19 @@ function SidebarLeft({
           : "bundle";
 
     if (window.parent && window.parent !== window) {
+      // Pipeline-v2 (BH plan r3 section 3): ONE document per bundle save —
+      // the multi-scene editor document IS the bundle's source of truth.
+      // Degrades to a pure v1 payload when archiving fails.
+      const documentPayload = buildSaveDocumentPayload(editor);
       window.parent.postMessage(
         {
           type: messageType,
-          payload: envelope,
+          payload: documentPayload
+            ? { ...envelope, document: documentPayload }
+            : envelope,
         },
-        parentOrigin
+        parentOrigin,
+        documentPayload ? [documentPayload.archiveBytes] : []
       );
       toast.success(
         `Saved ${bundleKind} "${envelope.bundleName}" (${layouts.length} layout${layouts.length === 1 ? "" : "s"}) to Bible Helper.`
