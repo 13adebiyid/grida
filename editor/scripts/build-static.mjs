@@ -15,6 +15,7 @@ import {
   rmSync,
   writeFileSync,
   readFileSync,
+  copyFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -510,11 +511,48 @@ if (existsSync(LOCK)) {
 }
 writeFileSync(LOCK, `${process.pid}\n${new Date().toISOString()}\n`);
 
+// Vendor the locally built canvas-wasm binary into the static export.
+//
+// The Emscripten JS glue is bundled into the app chunks at BUILD time from
+// the workspace package's dist/ — so the .wasm the app fetches at RUNTIME
+// must come from that same dist/ build. The published CDN canary is a
+// different build (and requires internet in the packaged app), so the
+// static bundle always ships its own binary: copy dist/grida_canvas_wasm.wasm
+// into public/wasm/ and bake NEXT_PUBLIC_GRIDA_WASM_BASE into the build
+// (see grida-canvas/backends/wasm-locate-file.ts). Fail closed when the
+// binary is missing — a bundle that silently falls back to the CDN would
+// pair mismatched glue+wasm builds.
+const WASM_DIST = join("..", "crates", "grida-canvas-wasm", "dist");
+const WASM_BIN = "grida_canvas_wasm.wasm";
+const WASM_PUBLIC_DIR = join("public", "wasm");
+
+function vendorWasm() {
+  const src = join(WASM_DIST, WASM_BIN);
+  if (!existsSync(src)) {
+    throw new Error(
+      `canvas-wasm binary missing: ${src}\n` +
+        `Build it first: cd crates/grida-canvas-wasm && just build\n` +
+        `(requires the Emscripten SDK — python3 bin/activate-emsdk — and the\n` +
+        `wasm32-unknown-emscripten Rust target).`,
+    );
+  }
+  mkdirSync(WASM_PUBLIC_DIR, { recursive: true });
+  copyFileSync(src, join(WASM_PUBLIC_DIR, WASM_BIN));
+  console.log(`Vendored ${src} -> ${join(WASM_PUBLIC_DIR, WASM_BIN)}`);
+}
+
 try {
   park();
+  vendorWasm();
   const r = spawnSync("pnpm", ["exec", "next", "build"], {
     stdio: "inherit",
-    env: { ...process.env, STATIC_EXPORT: "1" },
+    env: {
+      ...process.env,
+      STATIC_EXPORT: "1",
+      // basePath is /editor under STATIC_EXPORT; public/ assets are served
+      // at the basePath root, so the vendored binary lands at /editor/wasm/.
+      NEXT_PUBLIC_GRIDA_WASM_BASE: "/editor/wasm",
+    },
     shell: true,
   });
   if (r.status !== 0) process.exitCode = r.status ?? 1;
@@ -531,6 +569,14 @@ try {
     process.exitCode = 1;
   } else {
     console.log(`Static export OK: ${expected}`);
+  }
+
+  const expectedWasm = join("out", "wasm", WASM_BIN);
+  if (!existsSync(expectedWasm)) {
+    console.error(`Static export missing vendored wasm: ${expectedWasm}`);
+    process.exitCode = 1;
+  } else {
+    console.log(`Vendored wasm OK: ${expectedWasm}`);
   }
 } finally {
   restore();

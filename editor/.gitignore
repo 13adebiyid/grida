@@ -20,6 +20,8 @@
 # static-export orchestrator (build-static.mjs)
 /_app_excluded/
 /.build-static.lock
+# vendored canvas-wasm binary (copied from crates/grida-canvas-wasm/dist)
+/public/wasm/
 
 # production
 /build
