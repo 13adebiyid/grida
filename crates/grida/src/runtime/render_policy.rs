@@ -105,6 +105,22 @@ pub struct RenderPolicy {
     /// When true, all paint operations use `set_anti_alias(false)`.
     /// For benchmarking AA cost at different zoom levels.
     pub force_no_aa: bool,
+    /// When true, `Fit`/`Transform` image fills are drawn as direct image
+    /// draws (clip to shape + concat fit matrix + `draw_image`) instead of
+    /// image shaders.
+    ///
+    /// Rationale: vector backends serialize the two forms very differently.
+    /// Skia's `SkSVGDevice` emits an image *shader* as a device-sized
+    /// `<pattern>` holding the image at natural size — the shader's local
+    /// matrix (where the painter encodes the box-fit) is dropped, so image
+    /// fills lose their fit in SVG exports. A direct image draw is emitted
+    /// with the full transform, preserving the fit geometry. Raster output
+    /// is equivalent; this exists for vector (SVG) export.
+    ///
+    /// Scope: shape fills only. `Tile` fills stay on the shader path (a
+    /// `<pattern>` is the faithful SVG form for tiling), as do image paints
+    /// used as strokes or text fills.
+    pub direct_image_fills: bool,
 }
 
 impl RenderPolicy {
@@ -119,6 +135,7 @@ impl RenderPolicy {
         ignore_clips_content: false,
         effect_quality: EffectQuality::Full,
         force_no_aa: false,
+        direct_image_fills: false,
     };
 
     /// Convenience preset used by the editor feature \"Show outlines\".
@@ -133,6 +150,7 @@ impl RenderPolicy {
         ignore_clips_content: true,
         effect_quality: EffectQuality::Full,
         force_no_aa: false,
+        direct_image_fills: false,
     };
 
     #[inline]
@@ -170,6 +188,9 @@ impl RenderPolicy {
         ) && self.compositing == CompositingPolicy::Enabled
             && !self.ignore_clips_content
             && !self.force_no_aa
+            // Direct image draws record different picture commands than the
+            // shader path, so this variant must not unify with the standard one.
+            && !self.direct_image_fills
     }
 
     /// True only for the default renderer behavior (full fills/strokes + effects + compositing).
@@ -228,6 +249,9 @@ impl RenderPolicy {
         ) && self.effects == EffectsPolicy::Enabled
             && self.compositing == CompositingPolicy::Enabled
             && !self.ignore_clips_content
+            // Export-only variant; skip the compositing cache entirely so no
+            // cached texture can leak between shader and direct-draw variants.
+            && !self.direct_image_fills
     }
 
     /// Derive an in-memory cache namespace key for this render policy.
@@ -346,6 +370,9 @@ impl RenderPolicy {
             ignore_clips_content,
             effect_quality: EffectQuality::Full,
             force_no_aa,
+            // Not exposed via flags: this is an internal vector-export knob
+            // set directly by the SVG exporter, never by API consumers.
+            direct_image_fills: false,
         }
     }
 

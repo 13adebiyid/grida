@@ -1008,6 +1008,10 @@ impl<'a> Painter<'a> {
         if fills.is_empty() {
             return;
         }
+        if self.requires_direct_image_fills(fills) {
+            self.draw_fills_direct(shape, fills, None, 1.0, 0.0, 0.0);
+            return;
+        }
         if let Some(paint) = paint::sk_paint_stack(
             fills,
             (shape.rect.width(), shape.rect.height()),
@@ -1018,6 +1022,152 @@ impl<'a> Painter<'a> {
         }
     }
 
+    /// True when the policy requests direct image draws AND the fill stack
+    /// contains an image paint whose fit would be lost by the shader path
+    /// (see `RenderPolicy::direct_image_fills`).
+    #[inline]
+    fn requires_direct_image_fills(&self, fills: &[Paint]) -> bool {
+        self.policy.direct_image_fills
+            && fills.iter().any(|p| {
+                matches!(
+                    p,
+                    Paint::Image(img)
+                        if matches!(
+                            img.fit,
+                            ImagePaintFit::Fit(_) | ImagePaintFit::Transform(_)
+                        )
+                )
+            })
+    }
+
+    /// Draw fills one paint at a time so `Fit`/`Transform` image fills can be
+    /// emitted as direct image draws (clip to geometry + concat fit matrix +
+    /// `draw_image`), which vector backends serialize with full geometry.
+    /// Non-image paints (and `Tile` image paints) keep their normal form.
+    ///
+    /// `path_override` substitutes the fill geometry (the stroke-subtracted
+    /// path from `draw_path_fills_with_opacity`); otherwise `shape` is drawn.
+    ///
+    /// `opacity` is the layer opacity the `*_with_opacity` callers fold into
+    /// paint alpha. That fold is only valid for a single draw call, so a
+    /// multi-paint stack is wrapped in a bounded `save_layer_alpha` instead.
+    /// This path only runs during vector export, never on interactive frames.
+    fn draw_fills_direct(
+        &self,
+        shape: &PainterShape,
+        fills: &[Paint],
+        path_override: Option<&Path>,
+        opacity: f32,
+        tx: f32,
+        ty: f32,
+    ) {
+        let use_layer = opacity < 1.0 && fills.len() > 1;
+        if use_layer {
+            let bounds = shape.rect.with_offset((tx, ty));
+            self.canvas
+                .save_layer_alpha(bounds, (opacity * 255.0) as u32);
+        }
+        let per_paint_opacity = if use_layer { 1.0 } else { opacity };
+
+        for fill in fills {
+            match fill {
+                Paint::Image(img)
+                    if matches!(img.fit, ImagePaintFit::Fit(_) | ImagePaintFit::Transform(_)) =>
+                {
+                    self.draw_image_fill_direct(
+                        shape,
+                        img,
+                        path_override,
+                        per_paint_opacity,
+                        tx,
+                        ty,
+                    );
+                }
+                other => {
+                    if let Some(mut sk_paint) = paint::sk_paint_stack(
+                        std::slice::from_ref(other),
+                        (shape.rect.width(), shape.rect.height()),
+                        self.images,
+                        self.policy.anti_alias(),
+                    ) {
+                        if per_paint_opacity < 1.0 {
+                            sk_paint.set_alpha_f(sk_paint.alpha_f() * per_paint_opacity);
+                        }
+                        if let Some(path) = path_override {
+                            self.canvas.draw_path(path, &sk_paint);
+                        } else {
+                            self.draw_shape_at_offset(shape, &sk_paint, tx, ty);
+                        }
+                    }
+                }
+            }
+        }
+
+        if use_layer {
+            self.canvas.restore();
+        }
+    }
+
+    /// Draw a single `Fit`/`Transform` image fill as a direct image draw:
+    /// clip to the fill geometry, concat the box-fit matrix (the exact same
+    /// numbers `image_shader` would bake into the shader's local matrix),
+    /// then draw the image at the origin. Sampling, filters, opacity, and
+    /// blend mode mirror the shader path (see `painter::image::image_shader`).
+    fn draw_image_fill_direct(
+        &self,
+        shape: &PainterShape,
+        img: &ImagePaint,
+        path_override: Option<&Path>,
+        opacity: f32,
+        tx: f32,
+        ty: f32,
+    ) {
+        let key = match &img.image {
+            ResourceRef::RID(r) | ResourceRef::HASH(r) => r,
+        };
+        let Some(image) = self.images.get(key) else {
+            return;
+        };
+        let matrix = super::image::image_paint_matrix(
+            img,
+            (image.width() as f32, image.height() as f32),
+            (shape.rect.width(), shape.rect.height()),
+        );
+
+        self.canvas.save();
+        if tx != 0.0 || ty != 0.0 {
+            self.canvas.translate((tx, ty));
+        }
+        if let Some(path) = path_override {
+            self.canvas.clip_path(path, None, self.policy.anti_alias());
+        } else {
+            self.canvas
+                .clip_path(&shape.to_path(), None, self.policy.anti_alias());
+        }
+        self.canvas.concat(&sk::sk_matrix(matrix));
+
+        let mut sk_paint = SkPaint::default();
+        sk_paint.set_anti_alias(self.policy.anti_alias());
+        sk_paint.set_blend_mode(img.blend_mode.into());
+        sk_paint.set_alpha_f((img.opacity * opacity).clamp(0.0, 1.0));
+        if img.filters.has_filters() {
+            if let Some(color_filter) =
+                super::image_filters::create_image_filters_color_filter(&img.filters)
+            {
+                sk_paint.set_color_filter(color_filter);
+            }
+        }
+
+        // Same sampling as the shader path.
+        let sampling = skia_safe::SamplingOptions::new(
+            skia_safe::FilterMode::Nearest,
+            skia_safe::MipmapMode::Nearest,
+        );
+        self.canvas
+            .draw_image_with_sampling_options(image, (0.0, 0.0), sampling, Some(&sk_paint));
+        self.canvas.restore();
+    }
+
     /// Draw fills at pre-translated coordinates, avoiding canvas save/concat/restore.
     ///
     /// For pure-translation transforms, this pre-applies the translation to shape
@@ -1026,6 +1176,10 @@ impl<'a> Painter<'a> {
     #[inline]
     fn draw_fills_translated(&self, shape: &PainterShape, fills: &[Paint], tx: f32, ty: f32) {
         if fills.is_empty() {
+            return;
+        }
+        if self.requires_direct_image_fills(fills) {
+            self.draw_fills_direct(shape, fills, None, 1.0, tx, ty);
             return;
         }
         if let Some(paint) = paint::sk_paint_stack(
@@ -1049,6 +1203,10 @@ impl<'a> Painter<'a> {
         ty: f32,
     ) {
         if fills.is_empty() {
+            return;
+        }
+        if self.requires_direct_image_fills(fills) {
+            self.draw_fills_direct(shape, fills, None, opacity, tx, ty);
             return;
         }
         if let Some(mut paint) = paint::sk_paint_stack(
@@ -1120,6 +1278,10 @@ impl<'a> Painter<'a> {
         if fills.is_empty() {
             return;
         }
+        if self.requires_direct_image_fills(fills) {
+            self.draw_fills_direct(shape, fills, None, opacity, 0.0, 0.0);
+            return;
+        }
         if let Some(mut paint) = paint::sk_paint_stack(
             fills,
             (shape.rect.width(), shape.rect.height()),
@@ -1145,6 +1307,10 @@ impl<'a> Painter<'a> {
         opacity: f32,
     ) {
         if fills.is_empty() {
+            return;
+        }
+        if self.requires_direct_image_fills(fills) {
+            self.draw_fills_direct(shape, fills, Some(path), opacity, 0.0, 0.0);
             return;
         }
         if let Some(mut paint) = paint::sk_paint_stack(

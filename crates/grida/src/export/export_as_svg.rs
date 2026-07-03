@@ -5,6 +5,7 @@ use crate::{
         camera::Camera2D,
         font_repository::FontRepository,
         image_repository::ImageRepository,
+        render_policy::RenderPolicy,
         scene::{Backend, Renderer, RendererOptions},
     },
 };
@@ -44,6 +45,15 @@ pub fn export_node_as_svg(
         store,
         RendererOptions::default(),
     );
+
+    // SVG output must carry image box-fit geometry as explicit transforms:
+    // Skia's SVG device serializes image SHADERS as device-sized patterns
+    // holding the image at natural size, dropping the fit entirely. Direct
+    // image draws serialize with full geometry instead.
+    renderer.set_render_policy(RenderPolicy {
+        direct_image_fills: true,
+        ..RenderPolicy::STANDARD
+    });
 
     renderer.fonts = fonts.clone();
     renderer.images = images.clone();
