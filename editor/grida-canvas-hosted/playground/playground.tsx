@@ -11,6 +11,7 @@ import { SidebarRoot } from "@/components/sidebar";
 import {
   Selection,
   Zoom,
+  SectionEffectsPresentationContext,
 } from "@/scaffolds/sidecontrol/sidecontrol-node-selection";
 import { DocumentProperties } from "@/scaffolds/sidecontrol/sidecontrol-document-properties";
 import { DocumentHierarchy } from "@/grida-canvas-react-starter-kit/starterkit-hierarchy";
@@ -40,6 +41,8 @@ import {
   useToolState,
 } from "@/grida-canvas-react/provider";
 import { FeShadowProperties } from "@/scaffolds/sidecontrol/controls/fe";
+import { PropertyLine, PropertyLineLabel } from "@/scaffolds/sidecontrol/ui";
+import InputPropertyNumber from "@/scaffolds/sidecontrol/ui/number";
 import {
   PropertySection,
   PropertySectionContent,
@@ -125,6 +128,10 @@ import { WorkbenchUI } from "@/components/workbench";
 import { cn } from "@/components/lib/utils";
 import { DarwinSidebarHeaderDragArea } from "../../host/desktop";
 import { editor } from "@/grida-canvas";
+// Alias for scopes where a `useCurrentEditor()` instance shadows `editor`.
+import { editor as editorNamespace } from "@/grida-canvas";
+import { dq } from "@/grida-canvas/query";
+import { SceneThumbnailRenderer } from "./scene-thumbnail-renderer";
 import useDisableSwipeBack from "@/grida-canvas-react/viewport/hooks/use-disable-browser-swipe-back";
 import { WindowGlobalCurrentEditorProvider } from "@/grida-canvas-react/devtools/global-api-host";
 import { EditorSyncPlugin } from "@/grida-canvas/plugins/sync";
@@ -1962,39 +1969,25 @@ function LocalFakeCursorChat() {
 }
 
 /**
- * Live-thumbnail capture is ON. The bundled WASM runtime wires its image
- * exporter only once the canvas surface binds (until then
- * `editor.exporter.formats` is empty), and `exportNodeAs` can stall/hang in
- * cold / post-mutation states — so the capture pipeline below is guarded by a
- * readiness retry (scheduleCapture) plus an 8s single-flight timeout that
- * degrades to the clean "No Preview Available" placeholder instead of freezing.
- *
- * The pipeline (feature-detect → exportNodeAs PNG → Blob URL with revocation;
- * stage scenes additionally composited onto opaque black so their transparent
- * container fill doesn't render blank) is the live tile source. Set this to
- * `false` to fall back to placeholders everywhere if a future runtime regresses
- * the exporter.
+ * Live-thumbnail capture is ON, rendered OFF the main thread: captures run
+ * in a dedicated worker with its OWN headless raster-backend wasm instance
+ * (scene-thumbnail-worker.ts via SceneThumbnailRenderer). The editor thread
+ * only encodes the document (FBS, image bytes stripped) and hands over
+ * image/font deltas; a hung render costs the worker (watchdog terminate +
+ * respawn, repeat offenders quarantined) — never the editor. This replaced
+ * the main-thread `editor.exportNodeAs` pipeline after the 2026-07-04
+ * effects freeze (a synchronous main-thread wasm hang is unrecoverable
+ * from JS). Set to `false` to fall back to placeholders everywhere.
  */
 // Typed `boolean` (not a literal) so toggling this value never makes the
 // capture pipeline below read as unreachable to the type-checker.
-//
-// OFF (2026-07-04): David's real-crash report — the whole editor hard-froze
-// while toggling shape effects — reproduced in the deployed bundle as a
-// permanent main-thread hang with the capture pipeline's WASM PNG export in
-// the mix (effects applied + capture interleaving; individual effect exports
-// are fine in isolation). A synchronous WASM hang inside a capture is
-// unrecoverable from JS, and thumbnails are a nicety — keep this OFF until
-// the wasm-side hang is root-caused. Scene tiles show the placeholder.
-const ENABLE_LIVE_THUMBNAILS: boolean = false;
+const ENABLE_LIVE_THUMBNAILS: boolean = true;
 
-// Live-thumbnail stabilization tuning (only used when the flag is ON):
-// bound a single exportNodeAs so a cold/stalled WASM call degrades gracefully,
-// and retry capture with backoff until the WASM exporter binds on a cold load.
-const EXPORT_TIMEOUT_MS = 8000;
+// Retry capture with backoff until the MAIN surface binds on a cold load —
+// image bytes for the worker are extracted from the main wasm instance.
 const READINESS_RETRY_DELAYS_MS: number[] = [120, 240, 480, 960, 1920, 3000];
-// Trailing debounce for edit-driven re-captures. Deliberately long: each
-// capture is a full WASM rasterization + PNG encode of the stage (photos
-// included) on the shared main thread — it must never ride the edit cadence.
+// Trailing debounce for edit-driven re-captures. The render itself is
+// off-thread; this only bounds doc-encode + postMessage churn.
 const EDIT_RECAPTURE_DEBOUNCE_MS = 3000;
 
 /**
@@ -2052,23 +2045,24 @@ function SceneThumbnailProvider({
   const sceneId = useEditorState(editor, (s) => s.scene_id);
   const scenesRef = useEditorState(editor, (s) => s.document.scenes_ref);
 
-  // Capture via the supported offscreen exporter (Grida's useSlideThumbnail
-  // pattern): exportNodeAs PNG -> Blob URL. The current WASM/CDN runtime ships
-  // without image exporters, so `editor.exporter` is the no-op provider
-  // (formats: []) and this short-circuits to the placeholder. When a build
-  // with exporters is bundled (tracked as a follow-up), `formats` populates
-  // and capture activates with no further changes here. No DOM/canvas scraping.
-  // --- WASM-exporter readiness + capture (live-thumbnail stabilization) ---
-  // Single-flight + timeout guards so a slow/cold exportNodeAs never freezes
-  // the editor or stacks concurrent exports; the readiness retry
-  // (scheduleCapture) re-attempts once the WASM surface binds.
+  // Off-thread render client: a worker with its own headless raster wasm
+  // (see scene-thumbnail-renderer.ts). Created lazily on first capture,
+  // terminated on unmount.
+  const rendererRef = useRef<SceneThumbnailRenderer | null>(null);
   const capturingRef = useRef(false);
   const pendingSceneRef = useRef<string | null>(null);
   const captureRef = useRef<(id: string) => void>(() => {});
 
-  // The canvas backend installs the real WASM exporter only after the surface
-  // binds (Editor.__bind_wasm_surface); until then `editor.exporter` is the
-  // no-op provider (formats: []). PNG in formats === exporter is ready.
+  useEffect(() => {
+    return () => {
+      rendererRef.current?.dispose();
+      rendererRef.current = null;
+    };
+  }, []);
+
+  // The MAIN surface must be bound before captures: the worker's image bytes
+  // are extracted from the main wasm instance (__get_image_bytes_for_wasm).
+  // PNG in exporter.formats === surface bound.
   const isExporterReady = useCallback(() => {
     const ex = (
       editor as unknown as { exporter?: { formats?: readonly string[] } }
@@ -2078,7 +2072,7 @@ function SceneThumbnailProvider({
 
   const capture = useCallback(
     async (targetSceneId: string) => {
-      if (!ENABLE_LIVE_THUMBNAILS) return; // gated off until the WASM exporter is stabilized
+      if (!ENABLE_LIVE_THUMBNAILS) return; // kill-switch: placeholders everywhere
       if (!enabled) return;
       if (editor.state.scene_id !== targetSceneId) return; // only the loaded scene
       if (!isExporterReady()) return; // not bound yet — scheduleCapture retries
@@ -2088,31 +2082,49 @@ function SceneThumbnailProvider({
         RHEMA_STAGE_NAME
       );
       if (!stageId) return;
-      // Single-flight: exportNodeAs can be heavy/cold; never run two at once.
-      // If asked while busy, remember the latest scene and re-run after.
+      // Single-flight: never run two captures at once. If asked while busy,
+      // remember the latest scene and re-run after.
       if (capturingRef.current) {
         pendingSceneRef.current = targetSceneId;
         return;
       }
       capturingRef.current = true;
       try {
-        // Bound the export so a stalled/hung WASM call degrades to the
-        // placeholder instead of leaving the thumbnail pending forever. (If the
-        // WASM export is main-thread-blocking this cannot prevent a synchronous
-        // freeze — that needs an off-thread export in core — but it caps async
-        // hangs and stops repeated attempts from piling up.)
-        const bytes = await Promise.race([
-          editor.exportNodeAs(stageId, "PNG", {
-            format: "PNG",
-            constraints: { type: "scale-to-fit-width", value: 320 },
-          } as never),
-          new Promise<never>((_, reject) =>
-            setTimeout(
-              () => reject(new Error("thumbnail export timed out")),
-              EXPORT_TIMEOUT_MS
-            )
+        const renderer = (rendererRef.current ??= new SceneThumbnailRenderer());
+        if (renderer.isQuarantined(targetSceneId)) return;
+        const snapshot = editor.getSnapshot()
+          .document as grida.program.document.Document;
+        const fonts = editor
+          .listLoadedFonts()
+          .map((family) => {
+            const item = editor.getFontItem(family);
+            return item
+              ? { family, urls: Object.values(item.files ?? {}) }
+              : null;
+          })
+          .filter((f): f is { family: string; urls: string[] } => !!f);
+        const bytes = await renderer.capture({
+          docBytes: io.GRID.encode(snapshot),
+          sceneId: targetSceneId,
+          exportNodeId: stageId,
+          width: 320,
+          // Paint-level src URLs — the same enumeration archivedir persists,
+          // and the exact ids image paints resolve at render time.
+          imageRefs: new dq.DocumentStateQuery(
+            snapshot
+          ).persistable_image_srcs(),
+          getImageBytes: (src) => {
+            try {
+              return editor.__get_image_bytes_for_wasm(src);
+            } catch {
+              return null;
+            }
+          },
+          fonts,
+          fallbackFonts: Array.from(
+            editorNamespace.config.fonts.DEFAULT_FONT_FALLBACK_SET
           ),
-        ]);
+        });
         if (editor.state.scene_id !== targetSceneId) return; // changed during await
         // Stage layouts render on a transparent container fill, so the export
         // is transparent and the (white) component text is invisible on the
@@ -3640,22 +3652,71 @@ function RhemaTextShadowSectionBody({ node_id }: { node_id: string }) {
   // changeNodeFilterEffects replaces the node's WHOLE effects array, so
   // rebuild it with the first shadow swapped/added/removed. Composition
   // order mirrors SectionEffects (shadows, blur, backdrop, glass, noises).
-  const withFirstShadow = useCallback(
-    (shadow: cg.FeShadow | null): cg.FilterEffect[] => {
-      const effects: cg.FilterEffect[] = [];
-      if (shadow) effects.push(shadow);
-      effects.push(...(fe_shadows ?? []).slice(1));
+  const withShadows = useCallback(
+    (shadows: cg.FeShadow[]): cg.FilterEffect[] => {
+      const effects: cg.FilterEffect[] = [...shadows];
       if (fe_blur) effects.push(fe_blur);
       if (fe_backdrop_blur) effects.push(fe_backdrop_blur);
       if (fe_liquid_glass) effects.push(fe_liquid_glass);
       if (fe_noises) effects.push(...fe_noises);
       return effects;
     },
-    [fe_shadows, fe_blur, fe_backdrop_blur, fe_liquid_glass, fe_noises]
+    [fe_blur, fe_backdrop_blur, fe_liquid_glass, fe_noises]
+  );
+  const withFirstShadow = useCallback(
+    (shadow: cg.FeShadow | null): cg.FilterEffect[] =>
+      withShadows(
+        shadow
+          ? [shadow, ...(fe_shadows ?? []).slice(1)]
+          : (fe_shadows ?? []).slice(1)
+      ),
+    [withShadows, fe_shadows]
   );
 
   if (type !== "tspan") return null;
   const shadow = fe_shadows?.[0];
+
+  // ── 3D (ProPresenter-style extrude) ─────────────────────────────────
+  // Depth N = N extra SHARP shadows stepped along the master shadow's
+  // offset direction at full opacity — a linear extrusion. No new effect
+  // model: the stack is plain fe_shadows and round-trips through save/
+  // load/export like any other shadow. Depth is DERIVED (count of sharp
+  // zero-blur extras), never stored.
+  const extras = (fe_shadows ?? []).slice(1);
+  const isExtrudeStack =
+    extras.length > 0 &&
+    extras.every((s) => (s.blur ?? 0) === 0 && (s.spread ?? 0) === 0);
+  const extrudeDepth = isExtrudeStack ? extras.length : 0;
+
+  const buildExtrude = (master: cg.FeShadow, depth: number): cg.FeShadow[] => {
+    const len = Math.hypot(master.dx, master.dy);
+    // Direction from the master offset; down-right when it has none.
+    const ux = len > 0.01 ? master.dx / len : Math.SQRT1_2;
+    const uy = len > 0.01 ? master.dy / len : Math.SQRT1_2;
+    const steps: cg.FeShadow[] = [];
+    for (let i = 1; i <= depth; i++) {
+      steps.push({
+        ...master,
+        type: "shadow",
+        inset: false,
+        dx: Math.round(ux * i * 100) / 100,
+        dy: Math.round(uy * i * 100) / 100,
+        blur: 0,
+        spread: 0,
+        color: { ...master.color, a: 1 },
+      });
+    }
+    return steps;
+  };
+
+  const setExtrudeDepth = (raw: number) => {
+    if (!shadow) return;
+    const depth = Math.max(0, Math.min(16, Math.round(raw)));
+    instance.commands.changeNodeFilterEffects(
+      node_id,
+      withShadows([shadow, ...buildExtrude(shadow, depth)])
+    );
+  };
 
   return (
     <PropertySection
@@ -3706,12 +3767,28 @@ function RhemaTextShadowSectionBody({ node_id }: { node_id: string }) {
           <FeShadowProperties
             value={shadow}
             onValueChange={(v) => {
+              const next = { ...v, type: "shadow" } as cg.FeShadow;
+              // With a 3D stack active, re-derive the extrusion from the
+              // edited master so direction/color edits track immediately.
               instance.commands.changeNodeFilterEffects(
                 node_id,
-                withFirstShadow({ ...v, type: "shadow" } as cg.FeShadow)
+                isExtrudeStack
+                  ? withShadows([next, ...buildExtrude(next, extrudeDepth)])
+                  : withFirstShadow(next)
               );
             }}
           />
+          <PropertyLine>
+            <PropertyLineLabel>3D depth</PropertyLineLabel>
+            <InputPropertyNumber
+              mode="fixed"
+              value={extrudeDepth}
+              min={0}
+              max={16}
+              step={1}
+              onValueCommit={(v) => setExtrudeDepth(Number(v) || 0)}
+            />
+          </PropertyLine>
         </PropertySectionContent>
       )}
     </PropertySection>
@@ -3837,7 +3914,12 @@ function SidebarRight({
                 </Tabs>
                 <SidebarContent className="gap-0">
                   {bhTab === "properties" ? (
-                    <>
+                    // Text shadows for tspan nodes are owned by the inline
+                    // "Text shadow" section below — hide fe_shadows[0] from
+                    // the generic Effects list so it isn't shown twice.
+                    <SectionEffectsPresentationContext.Provider
+                      value={{ hideFirstTextShadow: true }}
+                    >
                       <Selection
                         config={{ position: "off", developer: "off" }}
                         empty={
@@ -3847,7 +3929,7 @@ function SidebarRight({
                         }
                       />
                       <RhemaTextShadowSection />
-                    </>
+                    </SectionEffectsPresentationContext.Provider>
                   ) : (
                     <div className="px-3 py-3 space-y-2 text-xs">
                       <div className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground mb-1">

@@ -1972,9 +1972,25 @@ function SectionMask({ node_id, editor }: { node_id: string; editor: Editor }) {
 }
 
 // TODO: need to validate feX supported effect types, only allow them, currently we are only relying on feDropShadow to validate if effects are supported.
+/**
+ * Host-panel presentation opt-in for {@link SectionEffects}.
+ *
+ * `hideFirstTextShadow`: the Bible Helper panel renders its own inline
+ * "Text shadow" section bound to `fe_shadows[0]` for text nodes — with this
+ * set, the Effects section skips that entry for `tspan` nodes so the same
+ * shadow doesn't appear in two places. Additional shadows and every other
+ * effect still list here.
+ */
+export const SectionEffectsPresentationContext = React.createContext<{
+  hideFirstTextShadow?: boolean;
+}>({});
+
 function SectionEffects({ node_id }: { node_id: string }) {
   const backend = useBackendState();
   const instance = useCurrentEditor();
+  const { hideFirstTextShadow } = React.useContext(
+    SectionEffectsPresentationContext
+  );
   const {
     type,
     fe_shadows,
@@ -2021,7 +2037,16 @@ function SectionEffects({ node_id }: { node_id: string }) {
     ]);
   }, [effects, instance, node_id]);
 
-  const empty = effects.length === 0;
+  // The BH panel owns fe_shadows[0] for text nodes (its "Text shadow"
+  // section) — skip it here so the same shadow isn't shown twice. Index math
+  // below maps visible rows back into the FULL effects array.
+  const hiddenCount =
+    hideFirstTextShadow && type === "tspan" && (fe_shadows?.length ?? 0) > 0
+      ? 1
+      : 0;
+  const visibleEffects = hiddenCount ? effects.slice(hiddenCount) : effects;
+
+  const empty = visibleEffects.length === 0;
 
   return (
     <PropertySection
@@ -2039,26 +2064,29 @@ function SectionEffects({ node_id }: { node_id: string }) {
       </PropertySectionHeaderItem>
       {!empty && (
         <PropertySectionContent>
-          {effects.map((effect, index) => (
-            <PropertyRow key={index}>
-              <FeControl
-                value={effect}
-                onValueChange={(value) => {
-                  instance.commands.changeNodeFilterEffects(node_id, [
-                    ...effects.slice(0, index),
-                    value,
-                    ...effects.slice(index + 1),
-                  ]);
-                }}
-                onRemove={() => {
-                  instance.commands.changeNodeFilterEffects(node_id, [
-                    ...effects.slice(0, index),
-                    ...effects.slice(index + 1),
-                  ]);
-                }}
-              />
-            </PropertyRow>
-          ))}
+          {visibleEffects.map((effect, visibleIndex) => {
+            const index = visibleIndex + hiddenCount;
+            return (
+              <PropertyRow key={index}>
+                <FeControl
+                  value={effect}
+                  onValueChange={(value) => {
+                    instance.commands.changeNodeFilterEffects(node_id, [
+                      ...effects.slice(0, index),
+                      value,
+                      ...effects.slice(index + 1),
+                    ]);
+                  }}
+                  onRemove={() => {
+                    instance.commands.changeNodeFilterEffects(node_id, [
+                      ...effects.slice(0, index),
+                      ...effects.slice(index + 1),
+                    ]);
+                  }}
+                />
+              </PropertyRow>
+            );
+          })}
         </PropertySectionContent>
       )}
     </PropertySection>
