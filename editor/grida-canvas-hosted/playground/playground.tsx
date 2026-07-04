@@ -662,15 +662,25 @@ export default function CanvasPlayground({
     () => new Set()
   );
   const opfs = usePlaygroundOPFS(resolvedFilekey);
-  // Guards the crash-restore draft and the dirty flag against the seed
-  // hook's programmatic mutations (createImage/insert/mv during backdrop
-  // reconstruction are NOT operator edits). Without this, every seeded open
-  // writes a draft 1.2s later and the next open re-offers LAST session's
-  // seed via "Restore unsaved changes?" — the sticky-stale-seed failure.
-  // A counter (not a boolean) so overlapping runs can't unmask early; the
-  // suppression window also swallows an operator edit racing the (short,
-  // load-time) reconstruction — accepted: the next edit re-arms both.
-  const seedApplyingRef = useRef(0);
+  // Guards the crash-restore draft and the dirty flag against PROGRAMMATIC
+  // document mutations — the seed hook's backdrop reconstruction AND the
+  // rhema boot normalizers (scene background / stage geometry / userdata
+  // stamps). None of those are operator edits: unsuppressed, every open
+  // marked the session dirty at boot AND overwrote a surviving crash draft
+  // ~1.2s after mount with the freshly-loaded document (found via David's
+  // real-crash report, 2026-07-04). A counter (not a boolean) so overlapping
+  // windows can't unmask early; a suppression window also swallows an
+  // operator edit racing it — accepted: the next edit re-arms both.
+  const programmaticEditRef = useRef(0);
+  // Run `fn`'s synchronous dispatches under suppression.
+  const runProgrammaticEdit = useCallback((fn: () => void) => {
+    programmaticEditRef.current += 1;
+    try {
+      fn();
+    } finally {
+      programmaticEditRef.current -= 1;
+    }
+  }, []);
   // Track document dirtiness for Bible Helper sessions too (NOT just when
   // warnOnUnsavedChanges is set) so the host can confirm-before-discard on a
   // graceful editor close. The beforeunload guard below stays gated on
@@ -679,7 +689,7 @@ export default function CanvasPlayground({
   const { dirty, markSaved } = usePlaygroundDirtyFlag(
     instance,
     warnOnUnsavedChanges || profile === "bible-helper",
-    seedApplyingRef
+    programmaticEditRef
   );
   const [documentReady, setDocumentReady] = useState(() => !src);
   const [canvasReady, setCanvasReady] = useState(false);
@@ -790,7 +800,7 @@ export default function CanvasPlayground({
       (state) => state.document,
       (_store, _next, _prev, action) => {
         if (action?.type === "document/reset") return; // load/init, not an edit
-        if (seedApplyingRef.current > 0) return; // seed reconstruction, not an edit
+        if (programmaticEditRef.current > 0) return; // seed reconstruction, not an edit
         if (timer) clearTimeout(timer);
         timer = setTimeout(writeDraft, 1200);
       }
@@ -806,16 +816,22 @@ export default function CanvasPlayground({
   // saved document is loaded as normal first (this is purely additive — it never
   // changes the default load path); "Restore" swaps in the draft, "Discard"
   // clears it (written empty; the read below gates on length > 0).
-  const draftCheckedRef = useRef(false);
+  //
+  // The latch flips only when the prompt actually fires, NOT when a check
+  // starts: `documentReady` initializes TRUE for src-less mounts (every BH
+  // session), so the mount-time check races the load effect flipping it
+  // false — an early latch let that cancellation permanently swallow the
+  // prompt (David's real-crash report, 2026-07-04). A cancelled or empty
+  // check leaves the latch unset so the post-load re-run retries.
+  const draftPromptedRef = useRef(false);
   useEffect(() => {
     if (
       profile !== "bible-helper" ||
       !opfs ||
       !documentReady ||
-      draftCheckedRef.current
+      draftPromptedRef.current
     )
       return;
-    draftCheckedRef.current = true;
     let cancelled = false;
     void (async () => {
       let draftDocument: ReturnType<typeof io.GRID.decode> | null = null;
@@ -833,6 +849,8 @@ export default function CanvasPlayground({
         // no draft / unreadable — nothing to restore
       }
       if (cancelled || !draftDocument) return;
+      if (draftPromptedRef.current) return; // a concurrent pass already prompted
+      draftPromptedRef.current = true;
       const clearDraft = () => {
         try {
           void opfs.get("document.draft.grida1").write(new Uint8Array(0));
@@ -1239,8 +1257,8 @@ export default function CanvasPlayground({
     const { svg, stageId } = pendingSeedBackdrop;
     // Every dispatch below is programmatic reconstruction, not an operator
     // edit — suppress the crash-restore draft and the dirty flag for the
-    // duration (see seedApplyingRef).
-    seedApplyingRef.current += 1;
+    // duration (see programmaticEditRef).
+    programmaticEditRef.current += 1;
     void (async () => {
       try {
         const { images, remainderSvg } = extractBackdropImagesForSeed(svg);
@@ -1300,7 +1318,7 @@ export default function CanvasPlayground({
           backdropError
         );
       } finally {
-        seedApplyingRef.current -= 1;
+        programmaticEditRef.current -= 1;
         if (!cancelled) setPendingSeedBackdrop(null);
       }
     })();
@@ -1344,6 +1362,7 @@ export default function CanvasPlayground({
                             profile={profile}
                             parentOrigin={parentOrigin}
                             workspace={workspace}
+                            runProgrammaticEdit={runProgrammaticEdit}
                           />
                         </StarterKitOrgIdProvider>
                       </UserCustomTemplatesProvider>
@@ -1368,6 +1387,7 @@ function Consumer({
   profile,
   parentOrigin,
   workspace,
+  runProgrammaticEdit,
 }: {
   backend: "dom" | "canvas";
   canvasRef?: (canvas: HTMLCanvasElement | null) => void;
@@ -1382,6 +1402,10 @@ function Consumer({
    *  routes through the slide workspace (single-scene, simplified
    *  chrome, `bible-helper-slide-save` postMessage). */
   workspace?: "theme" | "stage" | "slide";
+  /** Runs synchronous dispatches with the crash-restore draft + dirty flag
+   *  suppressed — for the rhema boot normalizers, which are programmatic
+   *  housekeeping, not operator edits. */
+  runProgrammaticEdit: (fn: () => void) => void;
 }) {
   const isBibleHelper = profile === "bible-helper";
   const {
@@ -1483,13 +1507,15 @@ function Consumer({
     if (!stageId) return;
     if (!missingRhemaProfile && stageId === existingStageId) return;
 
-    instance.setUserData(sceneMeta.id, {
-      ...sceneUserData,
-      rhema_profile: "bible-helper",
-      rhema_lock_to_stage: true,
-      rhema_stage_node_id: stageId,
+    runProgrammaticEdit(() => {
+      instance.setUserData(sceneMeta.id, {
+        ...sceneUserData,
+        rhema_profile: "bible-helper",
+        rhema_lock_to_stage: true,
+        rhema_stage_node_id: stageId,
+      });
     });
-  }, [instance, isBibleHelper, sceneMeta]);
+  }, [instance, isBibleHelper, sceneMeta, runProgrammaticEdit]);
 
   useEffect(() => {
     if (!isBibleHelper || !sceneMeta?.stageId) return;
@@ -1503,71 +1529,83 @@ function Consumer({
       stageNode.layout_target_width !== RHEMA_STAGE_WIDTH ||
       stageNode.layout_target_height !== RHEMA_STAGE_HEIGHT;
 
+    const stageId = sceneMeta.stageId;
     if (needsPositioningUpdate) {
-      instance.commands.changeNodePropertyPositioning(sceneMeta.stageId, {
-        layout_positioning: "absolute",
-        layout_inset_left: 0,
-        layout_inset_top: 0,
+      runProgrammaticEdit(() => {
+        instance.commands.changeNodePropertyPositioning(stageId, {
+          layout_positioning: "absolute",
+          layout_inset_left: 0,
+          layout_inset_top: 0,
+        });
+        instance.commands.changeNodeSize(stageId, "width", RHEMA_STAGE_WIDTH);
+        instance.commands.changeNodeSize(stageId, "height", RHEMA_STAGE_HEIGHT);
       });
-      instance.commands.changeNodeSize(
-        sceneMeta.stageId,
-        "width",
-        RHEMA_STAGE_WIDTH
-      );
-      instance.commands.changeNodeSize(
-        sceneMeta.stageId,
-        "height",
-        RHEMA_STAGE_HEIGHT
-      );
     }
 
     if (stageNode.clips_content !== true) {
-      instance.commands.changeContainerNodeClipsContent(
-        sceneMeta.stageId,
-        true
-      );
+      runProgrammaticEdit(() => {
+        instance.commands.changeContainerNodeClipsContent(stageId, true);
+      });
     }
-  }, [instance, isBibleHelper, sceneMeta]);
+  }, [instance, isBibleHelper, sceneMeta, runProgrammaticEdit]);
 
   useEffect(() => {
     if (!isBibleHelper || !sceneMeta) return;
+    // Normalize only when the stored value actually differs: the
+    // unconditional dispatch fired on EVERY boot, marking untouched
+    // sessions dirty and arming the draft autosave (which then overwrote a
+    // surviving crash draft with the freshly-loaded document).
+    const sceneNode = instance.state.document.nodes[sceneMeta.id] as
+      | { background_color?: unknown }
+      | undefined;
+    const backgroundNeedsUpdate =
+      JSON.stringify(sceneNode?.background_color ?? null) !==
+      JSON.stringify(RHEMA_SCENE_BACKGROUND);
     if (sceneMeta.childrenCount > 0) {
-      instance.commands.changeSceneBackground(
-        sceneMeta.id,
-        RHEMA_SCENE_BACKGROUND
-      );
+      if (backgroundNeedsUpdate) {
+        runProgrammaticEdit(() => {
+          instance.commands.changeSceneBackground(
+            sceneMeta.id,
+            RHEMA_SCENE_BACKGROUND
+          );
+        });
+      }
       initializedRhemaSceneIdsRef.current.add(sceneMeta.id);
       return;
     }
     if (initializedRhemaSceneIdsRef.current.has(sceneMeta.id)) return;
 
     initializedRhemaSceneIdsRef.current.add(sceneMeta.id);
-    instance.commands.changeSceneBackground(
-      sceneMeta.id,
-      RHEMA_SCENE_BACKGROUND
-    );
-    const inserted = instance.commands.insert(
-      {
-        prototype: createRhemaStagePrototype(),
-      },
-      null
-    );
-    const stageId = inserted[0];
-    if (stageId) {
-      const sceneUserData = (instance.getUserData(sceneMeta.id) ??
-        {}) as Record<string, unknown>;
-      instance.setUserData(sceneMeta.id, {
-        ...sceneUserData,
-        rhema_profile: "bible-helper",
-        rhema_lock_to_stage: true,
-        rhema_stage_node_id: stageId,
-      });
-    }
+    runProgrammaticEdit(() => {
+      if (backgroundNeedsUpdate) {
+        instance.commands.changeSceneBackground(
+          sceneMeta.id,
+          RHEMA_SCENE_BACKGROUND
+        );
+      }
+      const inserted = instance.commands.insert(
+        {
+          prototype: createRhemaStagePrototype(),
+        },
+        null
+      );
+      const stageId = inserted[0];
+      if (stageId) {
+        const sceneUserData = (instance.getUserData(sceneMeta.id) ??
+          {}) as Record<string, unknown>;
+        instance.setUserData(sceneMeta.id, {
+          ...sceneUserData,
+          rhema_profile: "bible-helper",
+          rhema_lock_to_stage: true,
+          rhema_stage_node_id: stageId,
+        });
+      }
+    });
 
     requestAnimationFrame(() => {
       instance.camera.fit("<scene>", { margin: 64 });
     });
-  }, [instance, isBibleHelper, sceneMeta]);
+  }, [instance, isBibleHelper, sceneMeta, runProgrammaticEdit]);
 
   useEffect(() => {
     if (!isBibleHelper || !sceneMeta) return;
@@ -1621,16 +1659,18 @@ function Consumer({
       }
 
       if (nextX !== node.layout_inset_left || nextY !== node.layout_inset_top) {
-        instance.commands.changeNodePropertyPositioning(nodeId, {
-          layout_positioning: node.layout_positioning,
-          layout_inset_left: Math.round(nextX),
-          layout_inset_top: Math.round(nextY),
+        runProgrammaticEdit(() => {
+          instance.commands.changeNodePropertyPositioning(nodeId, {
+            layout_positioning: node.layout_positioning,
+            layout_inset_left: Math.round(nextX),
+            layout_inset_top: Math.round(nextY),
+          });
         });
       }
     }
 
     rhemaMigratedSceneIdsRef.current.add(sceneMeta.id);
-  }, [instance, isBibleHelper, sceneMeta]);
+  }, [instance, isBibleHelper, sceneMeta, runProgrammaticEdit]);
 
   useHotkeys(
     "shift+i",
@@ -1937,7 +1977,15 @@ function LocalFakeCursorChat() {
  */
 // Typed `boolean` (not a literal) so toggling this value never makes the
 // capture pipeline below read as unreachable to the type-checker.
-const ENABLE_LIVE_THUMBNAILS: boolean = true;
+//
+// OFF (2026-07-04): David's real-crash report — the whole editor hard-froze
+// while toggling shape effects — reproduced in the deployed bundle as a
+// permanent main-thread hang with the capture pipeline's WASM PNG export in
+// the mix (effects applied + capture interleaving; individual effect exports
+// are fine in isolation). A synchronous WASM hang inside a capture is
+// unrecoverable from JS, and thumbnails are a nicety — keep this OFF until
+// the wasm-side hang is root-caused. Scene tiles show the placeholder.
+const ENABLE_LIVE_THUMBNAILS: boolean = false;
 
 // Live-thumbnail stabilization tuning (only used when the flag is ON):
 // bound a single exportNodeAs so a cold/stalled WASM call degrades gracefully,
