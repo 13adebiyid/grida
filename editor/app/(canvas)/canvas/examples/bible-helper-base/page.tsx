@@ -27,6 +27,11 @@ function BibleHelperBaseInner() {
   const scene = params.get("scene");
   const parentOrigin = params.get("parentOrigin");
   const workspace = params.get("workspace");
+  // Transient host flag: the Bible-Helper crash-notification's "Restore"
+  // button opens the editor with this set so the crash draft applies
+  // immediately instead of prompting (the host banner IS the prompt).
+  // Never persisted into stored editor URLs by the host.
+  const restoreDraft = params.get("bhRestoreDraft");
 
   const roomId =
     typeof room === "string" && room.trim() ? room.trim() : "default";
@@ -84,6 +89,7 @@ function BibleHelperBaseInner() {
         profile="bible-helper"
         workspace={workspaceMode}
         filekey={`${filekeyPrefix}-${roomId}`}
+        restoreDraftOnBoot={restoreDraft === "1"}
       />
     </main>
   );

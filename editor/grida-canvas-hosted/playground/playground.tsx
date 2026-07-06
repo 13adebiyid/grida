@@ -162,6 +162,7 @@ import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
 import {
   buildRhemaThemeRuntimeJson,
   extractBackdropImagesForSeed,
+  getRhemaSceneBindings,
   materializeRhemaThemeDocument,
   stripTextFromSvg,
   RHEMA_BUNDLE_NAME_KEY,
@@ -238,6 +239,18 @@ const BIBLE_HELPER_DISCARD_DRAFT_MESSAGE_TYPE =
 // blank canvas. Host replies with BIBLE_HELPER_SEED_RESULT_MESSAGE_TYPE.
 const BIBLE_HELPER_SEED_REQUEST_MESSAGE_TYPE = "bible-helper-seed-request";
 const BIBLE_HELPER_SEED_RESULT_MESSAGE_TYPE = "bible-helper-seed-result";
+// Editor ⇄ host: SONG-slide word refresh. The slide's words (lyric lines)
+// live in the HOST — the canvas document's designated text node is only a
+// working copy for editing. On every document (re)load the editor asks the
+// host for the room's current words and overwrites the bound node's text
+// (programmatic — no dirty flag, no draft), so an interim Quick-edit in the
+// host can never leave the canvas showing stale words. Host replies
+// { requestId, text: string | null } — null means "not a song slide /
+// no words", a no-op.
+const BIBLE_HELPER_LYRIC_CONTENT_REQUEST_MESSAGE_TYPE =
+  "bible-helper-lyric-content-request";
+const BIBLE_HELPER_LYRIC_CONTENT_RESULT_MESSAGE_TYPE =
+  "bible-helper-lyric-content-result";
 
 /**
  * Ask the Bible Helper host for the stored theme payload for a room whose
@@ -629,6 +642,13 @@ export type CanvasPlaygroundProps = {
    * original theme-editor behavior.
    */
   workspace?: "theme" | "stage" | "slide";
+  /**
+   * Bible-helper crash-recovery: when true (set via the host banner's
+   * "Restore" action → `?bhRestoreDraft=1`), an existing crash draft is
+   * applied on boot WITHOUT the "Restore unsaved changes?" prompt — the
+   * host-side notification already was the prompt. No draft → no-op.
+   */
+  restoreDraftOnBoot?: boolean;
 } & Partial<UserCustomTemplatesProps>;
 
 export default function CanvasPlayground({
@@ -644,6 +664,7 @@ export default function CanvasPlayground({
   profile = "default",
   parentOrigin,
   workspace = "theme",
+  restoreDraftOnBoot = false,
 }: CanvasPlaygroundProps) {
   // Determine filekey: explicit prop > auto-generated from src > default "current"
   const resolvedFilekey = useMemo(() => {
@@ -858,6 +879,20 @@ export default function CanvasPlayground({
       if (cancelled || !draftDocument) return;
       if (draftPromptedRef.current) return; // a concurrent pass already prompted
       draftPromptedRef.current = true;
+      const docToRestore = draftDocument;
+      // Host-driven restore (crash-notification "Restore" button): the
+      // operator already chose — apply the draft silently, no prompt.
+      if (restoreDraftOnBoot) {
+        try {
+          instance.commands.reset(
+            editor.state.init({ editable: true, document: docToRestore }),
+            "draft"
+          );
+        } catch (err) {
+          console.error("[bh] draft auto-restore failed", err);
+        }
+        return;
+      }
       const clearDraft = () => {
         try {
           void opfs.get("document.draft.grida1").write(new Uint8Array(0));
@@ -865,7 +900,6 @@ export default function CanvasPlayground({
           /* best effort */
         }
       };
-      const docToRestore = draftDocument;
       toast("Restore unsaved changes?", {
         description: "Your last editor session ended before saving.",
         duration: Infinity,
@@ -891,7 +925,7 @@ export default function CanvasPlayground({
     return () => {
       cancelled = true;
     };
-  }, [profile, opfs, documentReady, instance, editor]);
+  }, [profile, opfs, documentReady, instance, editor, restoreDraftOnBoot]);
 
   // Host → editor: clear the crash-restore draft when the operator confirmed
   // "discard" on a graceful close, so those edits aren't re-offered next time.
@@ -910,6 +944,92 @@ export default function CanvasPlayground({
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [profile, opfs, parentOrigin]);
+
+  // SONG-slide word refresh (see the lyric-content message consts). The
+  // slide's words are HOST data; the canvas's bound text node is a working
+  // copy. Once per boot (after the document load settles) ask the host for
+  // the room's current words and overwrite the bound node when it differs
+  // — an interim Quick-edit in the host can never leave the canvas showing
+  // stale words. Programmatic: no dirty flag, no draft write. A null reply
+  // (not a song slide / host has no words) is a no-op.
+  //
+  // NOT run when a crash draft is being applied (restoreDraftOnBoot, or
+  // the operator later clicking the in-editor Restore toast): the draft
+  // may hold words edits that never reached the host — the restore's
+  // whole purpose — and the refresh would overwrite exactly those. The
+  // draft is authoritative for its session; a SAVE then writes its words
+  // back to the host (the sync-back path).
+  useEffect(() => {
+    if (profile !== "bible-helper" || !parentOrigin || workspace !== "slide")
+      return;
+    if (restoreDraftOnBoot) return;
+    if (typeof window === "undefined" || window.parent === window) return;
+    if (!documentReady) return;
+    let cancelled = false;
+
+    const requestId = `lyric-${v4()}`;
+    const timer = setTimeout(() => {
+      window.removeEventListener("message", onMessage);
+    }, 5000);
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== parentOrigin || e.source !== window.parent) return;
+      const d = e.data as {
+        type?: unknown;
+        payload?: { requestId?: unknown; text?: unknown };
+      } | null;
+      if (!d || d.type !== BIBLE_HELPER_LYRIC_CONTENT_RESULT_MESSAGE_TYPE)
+        return;
+      const p = d.payload ?? {};
+      if (p.requestId !== requestId) return;
+      window.removeEventListener("message", onMessage);
+      clearTimeout(timer);
+      if (cancelled) return;
+      const text = typeof p.text === "string" ? p.text : null;
+      if (text === null) return;
+      // A draft restore that happened while the reply was in flight wins —
+      // never stomp restored words (see the effect doc above).
+      if (draftPromptedRef.current) return;
+      try {
+        const doc = instance.getSnapshot()
+          .document as grida.program.document.Document;
+        runProgrammaticEdit(() => {
+          for (const sid of doc.scenes_ref) {
+            const bindings = getRhemaSceneBindings(doc, sid);
+            const nodeId = bindings.scriptureNodeId;
+            if (!nodeId) continue;
+            const node = doc.nodes[nodeId] as { text?: unknown } | undefined;
+            if (!node) continue;
+            if (typeof node.text === "string" && node.text === text) continue;
+            instance.commands.changeNodePropertyText(nodeId, text);
+          }
+        });
+      } catch (err) {
+        console.warn("[bh] lyric content refresh failed", err);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    window.parent.postMessage(
+      {
+        type: BIBLE_HELPER_LYRIC_CONTENT_REQUEST_MESSAGE_TYPE,
+        payload: { requestId, room: room_id ?? null },
+      },
+      parentOrigin
+    );
+    return () => {
+      cancelled = true;
+      window.removeEventListener("message", onMessage);
+      clearTimeout(timer);
+    };
+  }, [
+    profile,
+    parentOrigin,
+    workspace,
+    documentReady,
+    restoreDraftOnBoot,
+    instance,
+    room_id,
+    runProgrammaticEdit,
+  ]);
 
   useEffect(() => {
     if (backend !== "canvas") {
@@ -1798,6 +1918,7 @@ function Consumer({
                         opfs={opfs}
                         filekey={filekey}
                         workspace={workspace}
+                        runProgrammaticEdit={runProgrammaticEdit}
                       />
                     )}
                     <EditorSurfaceClipboardSyncProvider />
@@ -2288,6 +2409,7 @@ function SidebarLeft({
   opfs,
   filekey,
   workspace = "theme",
+  runProgrammaticEdit = (fn) => fn(),
 }: {
   toggleVisibility?: () => void;
   toggleMinimal?: () => void;
@@ -2307,6 +2429,10 @@ function SidebarLeft({
   // OPFS handle for persisting the editor document on Save Theme so the user
   // can reopen and edit existing themes instead of starting from blank canvas.
   opfs?: io.opfs.Handle | null;
+  /** Dirty-flag/draft suppression for programmatic housekeeping dispatches
+   *  (the workspace stamp reconcile below). Defaults to a plain call so
+   *  non-BH usages are unaffected. */
+  runProgrammaticEdit?: (fn: () => void) => void;
 }) {
   const editor = useCurrentEditor();
   const { activeSceneId, scenesCount, serviceReference, stageId, bundleName } =
@@ -2785,25 +2911,39 @@ function SidebarLeft({
     if (workspace !== "stage" && workspace !== "slide") return;
 
     const reconcile = () => {
-      const doc = editor.state.document;
-      for (const sid of doc.scenes_ref) {
-        const ud = (editor.getUserData(sid) ?? {}) as Record<string, unknown>;
-        if (ud[RHEMA_WORKSPACE_KEY] !== workspace) {
-          editor.setUserData(sid, { ...ud, [RHEMA_WORKSPACE_KEY]: workspace });
-        }
-        if (workspace === "slide") {
-          const sceneNode = doc.nodes[sid] as { name?: string } | undefined;
-          const currentName = (sceneNode?.name ?? "").trim();
-          const isAutoDefault =
-            /^(Scene|Theme) \d+$/.test(currentName) ||
-            currentName === "Untitled Slide";
-          if (isAutoDefault) {
-            const idx = doc.scenes_ref.indexOf(sid);
-            const slideNum = idx >= 0 ? idx + 1 : 1;
-            editor.commands.renameScene(sid, `Slide ${slideNum}`);
+      // Programmatic normalisation, not an operator edit — without the
+      // suppression, a freshly-seeded slide/stage document whose scene
+      // userdata lags the URL workspace flipped the DIRTY flag (and
+      // armed the crash-draft autosave) on plain OPEN: the host then
+      // recorded phantom "unsaved edits" and a kill mid-look offered a
+      // restore for a document nobody touched (found E2E 2026-07-06).
+      runProgrammaticEdit(() => {
+        const doc = editor.state.document;
+        for (const sid of doc.scenes_ref) {
+          const ud = (editor.getUserData(sid) ?? {}) as Record<
+            string,
+            unknown
+          >;
+          if (ud[RHEMA_WORKSPACE_KEY] !== workspace) {
+            editor.setUserData(sid, {
+              ...ud,
+              [RHEMA_WORKSPACE_KEY]: workspace,
+            });
+          }
+          if (workspace === "slide") {
+            const sceneNode = doc.nodes[sid] as { name?: string } | undefined;
+            const currentName = (sceneNode?.name ?? "").trim();
+            const isAutoDefault =
+              /^(Scene|Theme) \d+$/.test(currentName) ||
+              currentName === "Untitled Slide";
+            if (isAutoDefault) {
+              const idx = doc.scenes_ref.indexOf(sid);
+              const slideNum = idx >= 0 ? idx + 1 : 1;
+              editor.commands.renameScene(sid, `Slide ${slideNum}`);
+            }
           }
         }
-      }
+      });
     };
 
     reconcile();
