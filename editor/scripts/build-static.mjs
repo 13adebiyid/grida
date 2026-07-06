@@ -120,12 +120,20 @@ import Editor from "../../editor";
 
 function BibleHelperBaseInner() {
   const searchParams = useSearchParams();
-  const { roomId, initialSceneId, validatedParentOrigin, workspaceMode, filekey } =
-    useMemo(() => {
+  const {
+    roomId,
+    initialSceneId,
+    validatedParentOrigin,
+    workspaceMode,
+    filekey,
+    restoreDraftOnBoot,
+  } = useMemo(() => {
       const room = searchParams.get("room");
       const scene = searchParams.get("scene");
       const parentOrigin = searchParams.get("parentOrigin");
       const workspace = searchParams.get("workspace");
+      // Crash-banner Restore: apply the crash draft on boot, no prompt.
+      const restoreDraft = searchParams.get("bhRestoreDraft");
       const roomId =
         typeof room === "string" && room.trim() ? room.trim() : "default";
       const initialSceneId =
@@ -161,6 +169,7 @@ function BibleHelperBaseInner() {
         validatedParentOrigin,
         workspaceMode,
         filekey: \`\${filekeyPrefix}-\${roomId}\`,
+        restoreDraftOnBoot: restoreDraft === "1",
       };
     }, [searchParams]);
 
@@ -174,6 +183,7 @@ function BibleHelperBaseInner() {
         profile="bible-helper"
         workspace={workspaceMode}
         filekey={filekey}
+        restoreDraftOnBoot={restoreDraftOnBoot}
       />
     </main>
   );
