@@ -2661,6 +2661,7 @@ function SidebarLeft({
     stageId,
     opfs,
     workspace,
+    onSaved,
   ]);
 
   /**
@@ -2825,6 +2826,10 @@ function SidebarLeft({
         parentOrigin,
         documentPayload ? [documentPayload.archiveBytes] : []
       );
+      // Clean now — reset the dirty flag exactly like the single-theme save
+      // (this bundle path was the one the 2026-07-07 report hit: "saved the
+      // bundle" then still asked Exit without saving).
+      onSaved?.();
       toast.success(
         `Saved ${bundleKind} "${envelope.bundleName}" (${layouts.length} layout${layouts.length === 1 ? "" : "s"}) to Bible Helper.`
       );
@@ -2840,6 +2845,7 @@ function SidebarLeft({
     opfs,
     workspace,
     parentOrigin,
+    onSaved,
   ]);
 
   /** Set the workspace ("theme" or "stage") on the active scene. */
