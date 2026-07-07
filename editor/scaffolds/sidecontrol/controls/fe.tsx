@@ -87,17 +87,25 @@ function FeIcon({ value }: { value: cg.FilterEffect }) {
   }
 }
 
+/** The dropdown's value space: real effect types + the synthetic "3D Text"
+ *  presentation type (a derived fe_shadows extrusion stack, tspan only —
+ *  see fe-3d-text.ts). */
+type FeTypeOption = cg.FilterEffect["type"] | "3d-text";
+
 function FeTypeSelect({
   value,
   onValueChange,
   constraints,
+  can3DText,
 }: {
-  value: cg.FilterEffect["type"];
-  onValueChange: (type: cg.FilterEffect["type"]) => void;
+  value: FeTypeOption;
+  onValueChange: (type: FeTypeOption) => void;
   constraints?: FeTypeConstraints;
+  /** Offer the "3D Text" conversion entry (tspan nodes only). */
+  can3DText?: boolean;
 }) {
   return (
-    <PropertyEnum<cg.FilterEffect["type"]>
+    <PropertyEnum<FeTypeOption>
       enum={[
         {
           label: "Layer Blur",
@@ -114,6 +122,9 @@ function FeTypeSelect({
           value: "shadow",
           disabled: constraints?.["shadow"] === false,
         },
+        ...(can3DText || value === "3d-text"
+          ? [{ label: "3D Text", value: "3d-text" as const }]
+          : []),
         {
           label: "Liquid Glass",
           value: "glass",
@@ -128,19 +139,11 @@ function FeTypeSelect({
       value={value}
       onValueChange={(type) => {
         switch (type) {
-          case "shadow": {
-            onValueChange(type);
-            break;
-          }
+          case "shadow":
+          case "3d-text":
           case "filter-blur":
-          case "backdrop-filter-blur": {
-            onValueChange(type);
-            break;
-          }
-          case "glass": {
-            onValueChange(type);
-            break;
-          }
+          case "backdrop-filter-blur":
+          case "glass":
           case "noise": {
             onValueChange(type);
             break;
@@ -156,11 +159,18 @@ export function FeControl({
   onValueChange,
   onRemove,
   constraints,
+  can3DText,
+  onConvertTo3DText,
 }: {
   value: cg.FilterEffect;
   onValueChange?: (value: cg.FilterEffect) => void;
   onRemove?: () => void;
   constraints?: FeTypeConstraints;
+  /** Offer "3D Text" in the type dropdown (tspan nodes). Selecting it calls
+   *  onConvertTo3DText — the host converts the node's shadows into an
+   *  extrusion stack (fe-3d-text.ts). */
+  can3DText?: boolean;
+  onConvertTo3DText?: () => void;
 }) {
   const isActive = value.active ?? true;
 
@@ -185,8 +195,13 @@ export function FeControl({
         <div className="flex items-center flex-1/2">
           <FeTypeSelect
             value={value.type}
+            can3DText={can3DText}
             onValueChange={(type) => {
               switch (type) {
+                case "3d-text": {
+                  onConvertTo3DText?.();
+                  break;
+                }
                 case "shadow": {
                   onValueChange?.({
                     ...editor.config.DEFAULT_FE_SHADOW,
@@ -257,6 +272,85 @@ export function FeControl({
             } as cg.FilterEffect);
           }}
         />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * The synthetic "3D Text" effect row (batch item 8, 2026-07-07). Presents a
+ * whole fe_shadows extrusion stack as ONE entry styled exactly like the
+ * other effect rows: checkbox is implicit (the stack exists), the icon
+ * button on the left opens the settings popover (depth), the type dropdown
+ * shows "3D Text" (switching back to Shadow collapses the stack), and the
+ * minus removes the extrusion while keeping the master shadow.
+ */
+export function Fe3DTextControl({
+  depth,
+  onDepthChange,
+  onRemove,
+}: {
+  depth: number;
+  onDepthChange: (depth: number) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <Popover modal={false}>
+      <div className="flex items-center w-full gap-2">
+        <Checkbox checked disabled />
+        <PopoverTrigger asChild>
+          <Button variant="ghost" size="icon">
+            <ShadowOuterIcon />
+          </Button>
+        </PopoverTrigger>
+        <div className="flex items-center flex-1/2">
+          <FeTypeSelect
+            value="3d-text"
+            can3DText
+            onValueChange={(type) => {
+              // Switching the 3D row back to any concrete effect type simply
+              // drops the extrusion (the master shadow row stays; the
+              // operator can then edit that row's type as usual).
+              if (type !== "3d-text") onRemove();
+            }}
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove();
+            }}
+            className="ms-2 cursor-pointer"
+            tabIndex={-1}
+          >
+            <MinusIcon className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      <PopoverContent
+        align="start"
+        side="right"
+        sideOffset={8}
+        collisionPadding={10}
+      >
+        <div className="space-y-2">
+          <PropertyLine>
+            <PropertyLineLabel>Depth</PropertyLineLabel>
+            <InputPropertyNumber
+              mode="fixed"
+              value={depth}
+              min={1}
+              max={16}
+              step={1}
+              onValueCommit={(v) => onDepthChange(Number(v) || 1)}
+            />
+          </PropertyLine>
+          <p className="text-[10.5px] text-muted-foreground leading-snug">
+            Direction and color follow the Shadow effect above.
+          </p>
+        </div>
       </PopoverContent>
     </Popover>
   );

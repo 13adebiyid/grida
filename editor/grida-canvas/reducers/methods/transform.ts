@@ -50,7 +50,7 @@ function getRhemaStageBoundsConfig(
   return { stageId, bounds };
 }
 
-function getClampOffsetForUnion(
+export function getClampOffsetForUnion(
   union: cmath.Rectangle,
   bounds: cmath.Rectangle
 ): cmath.Vector2 {
@@ -62,16 +62,26 @@ function getClampOffsetForUnion(
   const boundsRight = bounds.x + bounds.width;
   const boundsBottom = bounds.y + bounds.height;
 
-  if (union.x < bounds.x) {
-    ox = bounds.x - union.x;
-  } else if (unionRight > boundsRight) {
-    ox = boundsRight - unionRight;
+  // A union LARGER than the stage can never fit inside it — clamping such
+  // an axis just forces an arbitrary edge alignment. A full-stage-width
+  // text layer snapped to center via the red stage guides then "reverted
+  // to the right" on release because `union.x < bounds.x` always won and
+  // left-edge-aligned it (2026-07-07 report). Leave the operator's
+  // placement alone on any axis the node overhangs on both sides.
+  if (union.width <= bounds.width) {
+    if (union.x < bounds.x) {
+      ox = bounds.x - union.x;
+    } else if (unionRight > boundsRight) {
+      ox = boundsRight - unionRight;
+    }
   }
 
-  if (union.y < bounds.y) {
-    oy = bounds.y - union.y;
-  } else if (unionBottom > boundsBottom) {
-    oy = boundsBottom - unionBottom;
+  if (union.height <= bounds.height) {
+    if (union.y < bounds.y) {
+      oy = bounds.y - union.y;
+    } else if (unionBottom > boundsBottom) {
+      oy = boundsBottom - unionBottom;
+    }
   }
 
   return [ox, oy];

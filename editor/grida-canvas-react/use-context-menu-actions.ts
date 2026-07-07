@@ -23,8 +23,12 @@ export interface ContextMenuAction {
 // from v1 — it routes through an async font-load/validation path, not a plain
 // setter, so applying it blind risks silent failure.
 const LAYER_STYLE_CLIPBOARD_KEY = "bh-layer-style-clipboard.v1";
+// NOTE: the node schema stores fills under `fill_paints` (see
+// node.reducer.ts defineNodeProperty<"fill_paints">) — reading `fills`
+// here silently copied NOTHING for the most visible property (the color),
+// which made the whole feature read as broken (2026-07-07 report).
 const LAYER_STYLE_KEYS = [
-  "fills",
+  "fill_paints",
   "font_size",
   "font_weight",
   "text_align",
@@ -67,8 +71,8 @@ function applyLayerStyle(
       /* property unsupported on this node — skip it */
     }
   };
-  if (style.fills !== undefined)
-    tryCall(c.changeNodePropertyFills, id, style.fills);
+  if (style.fill_paints !== undefined)
+    tryCall(c.changeNodePropertyFills, id, style.fill_paints);
   if (style.font_size !== undefined)
     tryCall(c.changeTextNodeFontSize, id, set(style.font_size));
   if (style.font_weight !== undefined)

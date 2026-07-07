@@ -41,6 +41,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useCurrentSceneState } from "@/grida-canvas-react/provider";
+import { uploadRhemaBackgroundVideo } from "@/grida-canvas-react/use-rhema-background-video-upload";
 
 function SceneBackgroundPropertyLine() {
   const editor = useCurrentEditor();
@@ -59,43 +60,14 @@ function SceneBackgroundPropertyLine() {
   );
 }
 
-const PICK_MEDIA_REQUEST_TYPE = "bible-helper-pick-media";
-const PICK_MEDIA_RESULT_TYPE = "bible-helper-pick-media-result";
-
-/**
- * Resolve the Bible Helper opener origin the editor was launched with.
- * Mirrors the validation in scripts/build-static.mjs (only http/https,
- * normalised to .origin). Falls back to the iframe ancestor origin, then
- * "*" as a last resort so a picked clip can still be uploaded even when
- * the query param is absent — BH validates the message source on its end.
- */
-function resolveParentOrigin(): string {
-  if (typeof window === "undefined") return "*";
-  try {
-    const param = new URLSearchParams(window.location.search).get(
-      "parentOrigin"
-    );
-    if (param && param.trim()) {
-      const parsed = new URL(param.trim());
-      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-        return parsed.origin;
-      }
-    }
-  } catch {
-    // ignore malformed parentOrigin
-  }
-  const ancestor = window.location.ancestorOrigins?.[0];
-  if (ancestor && ancestor.trim()) return ancestor;
-  return "*";
-}
-
 /**
  * Background-video picker. Lets the operator choose a looping clip; the
- * bytes are shipped to Bible Helper over the postMessage bridge, which
- * stores them in IndexedDB and replies with a stable blobKey. The
- * resulting { blobKey, name, mimeType } reference is stamped on the
- * scene's userdata so it round-trips on reopen and lands in the runtime
- * payload via buildRhemaThemeRuntimeJson.
+ * bytes are shipped to Bible Helper over the postMessage bridge (shared
+ * flow in use-rhema-background-video-upload, also used by the canvas
+ * drop path), which stores them in IndexedDB and replies with a stable
+ * blobKey. The resulting { blobKey, name, mimeType } reference is
+ * stamped on the scene's userdata so it round-trips on reopen and lands
+ * in the runtime payload via buildRhemaThemeRuntimeJson.
  */
 function SceneBackgroundVideoPropertyLine() {
   const editor = useCurrentEditor();
@@ -140,87 +112,17 @@ function SceneBackgroundVideoPropertyLine() {
       e.target.value = "";
       if (!file) return;
 
-      const parentOrigin = resolveParentOrigin();
-      const requestId =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `bgvid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
+      // Shared bridge flow (also used by the canvas drop path) — reads the
+      // bytes, round-trips through Bible Helper's IndexedDB store, stamps
+      // the returned blobKey on the scene userdata, and toasts the outcome.
       setUploading(true);
-      let bytes: ArrayBuffer;
       try {
-        bytes = await file.arrayBuffer();
-      } catch (err) {
+        await uploadRhemaBackgroundVideo(editor, scene_id, file);
+      } finally {
         setUploading(false);
-        console.error("[bg-video] failed to read file", err);
-        toast.error("Could not read the selected video.");
-        return;
       }
-
-      const onMessage = (ev: MessageEvent) => {
-        const data = ev.data as
-          | {
-              type?: string;
-              payload?: {
-                requestId?: string;
-                ok?: boolean;
-                blobKey?: string;
-                name?: string;
-                mimeType?: string;
-                error?: string;
-              };
-            }
-          | undefined;
-        if (
-          !data ||
-          data.type !== PICK_MEDIA_RESULT_TYPE ||
-          data.payload?.requestId !== requestId
-        ) {
-          return;
-        }
-        window.removeEventListener("message", onMessage);
-        clearTimeout(timeout);
-        setUploading(false);
-        const payload = data.payload;
-        if (payload?.ok && typeof payload.blobKey === "string") {
-          writeSelection({
-            blobKey: payload.blobKey,
-            name: payload.name ?? file.name,
-            mimeType: payload.mimeType ?? (file.type || undefined),
-          });
-          toast.success("Background video added.");
-        } else {
-          toast.error(
-            payload?.error
-              ? `Upload failed: ${payload.error}`
-              : "Upload failed."
-          );
-        }
-      };
-
-      // Guard against a silent bridge (BH not listening / older build).
-      const timeout = setTimeout(() => {
-        window.removeEventListener("message", onMessage);
-        setUploading(false);
-        toast.error("Upload timed out — no response from Bible Helper.");
-      }, 60_000);
-
-      window.addEventListener("message", onMessage);
-      window.parent.postMessage(
-        {
-          type: PICK_MEDIA_REQUEST_TYPE,
-          payload: {
-            requestId,
-            name: file.name,
-            mimeType: file.type || "video/mp4",
-            bytes,
-          },
-        },
-        parentOrigin,
-        [bytes]
-      );
     },
-    [writeSelection]
+    [editor, scene_id]
   );
 
   return (

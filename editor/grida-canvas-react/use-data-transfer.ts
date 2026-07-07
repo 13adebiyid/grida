@@ -2,6 +2,10 @@
 
 import React, { useCallback } from "react";
 import { io } from "@grida/io";
+import {
+  isVideoFile,
+  uploadRhemaBackgroundVideo,
+} from "./use-rhema-background-video-upload";
 import cg from "@grida/cg";
 import { useCurrentEditor, useEditorState } from "./use-editor";
 import type { Editor } from "@/grida-canvas/editor";
@@ -809,6 +813,20 @@ export function useDataTransferEventTarget() {
           file.name.toLowerCase().endsWith(".deck")
         ) {
           toast.info("Use [File] > [Import Figma] to import .fig files");
+          continue;
+        }
+
+        // Videos: the wasm canvas can't decode video in-canvas, so a
+        // dropped clip becomes the design's BACKGROUND VIDEO (the same
+        // bridge + storage the document-properties picker uses); the
+        // theme runtime composites it under the layers on live output.
+        if (isVideoFile(file)) {
+          const sceneId = instance.state.scene_id;
+          if (!sceneId) {
+            toast.error("Open a design before dropping a video.");
+            continue;
+          }
+          void uploadRhemaBackgroundVideo(instance, sceneId, file);
           continue;
         }
 

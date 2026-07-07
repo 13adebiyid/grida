@@ -11,7 +11,6 @@ import { SidebarRoot } from "@/components/sidebar";
 import {
   Selection,
   Zoom,
-  SectionEffectsPresentationContext,
 } from "@/scaffolds/sidecontrol/sidecontrol-node-selection";
 import { DocumentProperties } from "@/scaffolds/sidecontrol/sidecontrol-document-properties";
 import { DocumentHierarchy } from "@/grida-canvas-react-starter-kit/starterkit-hierarchy";
@@ -3753,188 +3752,6 @@ function useRhemaStageBindings(editor: ReturnType<typeof useCurrentEditor>) {
   return { ...data, setStageBinding };
 }
 
-/** Rhema (bible-helper) only: surface the shadow editor for TEXT layers
- * inline in the properties panel. The generic path to the same control —
- * Effects header → "+" → effect row → icon-button popover (FeControl /
- * FeShadowProperties) — proved undiscoverable in booth use ("text shadow
- * doesn't let you adjust how big the shadow is"). This renders the SAME
- * FeShadowProperties bound to fe_shadows[0] via the SAME
- * changeNodeFilterEffects command — no separate shadow model. Additional
- * shadows and other effects stay editable in the Effects section.
- */
-function RhemaTextShadowSection() {
-  const instance = useCurrentEditor();
-  const selected = useEditorState(instance, (state) =>
-    state.selection.length === 1 ? state.selection[0] : null
-  );
-  if (!selected) return null;
-  return <RhemaTextShadowSectionBody key={selected} node_id={selected} />;
-}
-
-function RhemaTextShadowSectionBody({ node_id }: { node_id: string }) {
-  const instance = useCurrentEditor();
-  const {
-    type,
-    fe_shadows,
-    fe_blur,
-    fe_backdrop_blur,
-    fe_liquid_glass,
-    fe_noises,
-  } = useNodeState(node_id, (node) => ({
-    type: node.type,
-    fe_shadows: node.fe_shadows,
-    fe_blur: node.fe_blur,
-    fe_backdrop_blur: node.fe_backdrop_blur,
-    fe_liquid_glass: node.fe_liquid_glass,
-    fe_noises: node.fe_noises,
-  }));
-
-  // changeNodeFilterEffects replaces the node's WHOLE effects array, so
-  // rebuild it with the first shadow swapped/added/removed. Composition
-  // order mirrors SectionEffects (shadows, blur, backdrop, glass, noises).
-  const withShadows = useCallback(
-    (shadows: cg.FeShadow[]): cg.FilterEffect[] => {
-      const effects: cg.FilterEffect[] = [...shadows];
-      if (fe_blur) effects.push(fe_blur);
-      if (fe_backdrop_blur) effects.push(fe_backdrop_blur);
-      if (fe_liquid_glass) effects.push(fe_liquid_glass);
-      if (fe_noises) effects.push(...fe_noises);
-      return effects;
-    },
-    [fe_blur, fe_backdrop_blur, fe_liquid_glass, fe_noises]
-  );
-  const withFirstShadow = useCallback(
-    (shadow: cg.FeShadow | null): cg.FilterEffect[] =>
-      withShadows(
-        shadow
-          ? [shadow, ...(fe_shadows ?? []).slice(1)]
-          : (fe_shadows ?? []).slice(1)
-      ),
-    [withShadows, fe_shadows]
-  );
-
-  if (type !== "tspan") return null;
-  const shadow = fe_shadows?.[0];
-
-  // ── 3D (ProPresenter-style extrude) ─────────────────────────────────
-  // Depth N = N extra SHARP shadows stepped along the master shadow's
-  // offset direction at full opacity — a linear extrusion. No new effect
-  // model: the stack is plain fe_shadows and round-trips through save/
-  // load/export like any other shadow. Depth is DERIVED (count of sharp
-  // zero-blur extras), never stored.
-  const extras = (fe_shadows ?? []).slice(1);
-  const isExtrudeStack =
-    extras.length > 0 &&
-    extras.every((s) => (s.blur ?? 0) === 0 && (s.spread ?? 0) === 0);
-  const extrudeDepth = isExtrudeStack ? extras.length : 0;
-
-  const buildExtrude = (master: cg.FeShadow, depth: number): cg.FeShadow[] => {
-    const len = Math.hypot(master.dx, master.dy);
-    // Direction from the master offset; down-right when it has none.
-    const ux = len > 0.01 ? master.dx / len : Math.SQRT1_2;
-    const uy = len > 0.01 ? master.dy / len : Math.SQRT1_2;
-    const steps: cg.FeShadow[] = [];
-    for (let i = 1; i <= depth; i++) {
-      steps.push({
-        ...master,
-        type: "shadow",
-        inset: false,
-        dx: Math.round(ux * i * 100) / 100,
-        dy: Math.round(uy * i * 100) / 100,
-        blur: 0,
-        spread: 0,
-        color: { ...master.color, a: 1 },
-      });
-    }
-    return steps;
-  };
-
-  const setExtrudeDepth = (raw: number) => {
-    if (!shadow) return;
-    const depth = Math.max(0, Math.min(16, Math.round(raw)));
-    instance.commands.changeNodeFilterEffects(
-      node_id,
-      withShadows([shadow, ...buildExtrude(shadow, depth)])
-    );
-  };
-
-  return (
-    <PropertySection
-      data-empty={!shadow}
-      className="border-b [&[data-empty='true']]:pb-0"
-    >
-      <PropertySectionHeaderItem
-        onClick={
-          shadow
-            ? undefined
-            : () =>
-                instance.commands.changeNodeFilterEffects(
-                  node_id,
-                  withFirstShadow({
-                    type: "shadow",
-                    ...editor.config.DEFAULT_FE_SHADOW,
-                  })
-                )
-        }
-      >
-        <PropertySectionHeaderLabel>Text shadow</PropertySectionHeaderLabel>
-        <PropertySectionHeaderActions>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={
-              shadow
-                ? (e) => {
-                    e.stopPropagation();
-                    instance.commands.changeNodeFilterEffects(
-                      node_id,
-                      withFirstShadow(null)
-                    );
-                  }
-                : undefined
-            }
-          >
-            {shadow ? (
-              <MinusIcon className="size-3" />
-            ) : (
-              <PlusIcon className="size-3" />
-            )}
-          </Button>
-        </PropertySectionHeaderActions>
-      </PropertySectionHeaderItem>
-      {shadow && (
-        <PropertySectionContent>
-          <FeShadowProperties
-            value={shadow}
-            onValueChange={(v) => {
-              const next = { ...v, type: "shadow" } as cg.FeShadow;
-              // With a 3D stack active, re-derive the extrusion from the
-              // edited master so direction/color edits track immediately.
-              instance.commands.changeNodeFilterEffects(
-                node_id,
-                isExtrudeStack
-                  ? withShadows([next, ...buildExtrude(next, extrudeDepth)])
-                  : withFirstShadow(next)
-              );
-            }}
-          />
-          <PropertyLine>
-            <PropertyLineLabel>3D depth</PropertyLineLabel>
-            <InputPropertyNumber
-              mode="fixed"
-              value={extrudeDepth}
-              min={0}
-              max={16}
-              step={1}
-              onValueCommit={(v) => setExtrudeDepth(Number(v) || 0)}
-            />
-          </PropertyLine>
-        </PropertySectionContent>
-      )}
-    </PropertySection>
-  );
-}
-
 function SidebarRight({
   variant = "sidebar",
   tab,
@@ -4054,22 +3871,19 @@ function SidebarRight({
                 </Tabs>
                 <SidebarContent className="gap-0">
                   {bhTab === "properties" ? (
-                    // Text shadows for tspan nodes are owned by the inline
-                    // "Text shadow" section below — hide fe_shadows[0] from
-                    // the generic Effects list so it isn't shown twice.
-                    <SectionEffectsPresentationContext.Provider
-                      value={{ hideFirstTextShadow: true }}
-                    >
-                      <Selection
-                        config={{ position: "off", developer: "off" }}
-                        empty={
-                          <div className="mt-4 mb-10">
-                            <DocumentProperties />
-                          </div>
-                        }
-                      />
-                      <RhemaTextShadowSection />
-                    </SectionEffectsPresentationContext.Provider>
+                    // Text shadow + 3D text live in the standard Effects
+                    // section now (one list, one row per effect; the 3D
+                    // stack collapses to a single "3D Text" entry) — the
+                    // former inline sections are retired (item 8,
+                    // 2026-07-07).
+                    <Selection
+                      config={{ position: "off", developer: "off" }}
+                      empty={
+                        <div className="mt-4 mb-10">
+                          <DocumentProperties />
+                        </div>
+                      }
+                    />
                   ) : (
                     <div className="px-3 py-3 space-y-2 text-xs">
                       <div className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground mb-1">

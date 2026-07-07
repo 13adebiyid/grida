@@ -93,7 +93,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { PropertyAccessExpressionControl } from "./controls/props-property-access-expression";
 import { TextDetails } from "./controls/widgets/text-details";
-import { FeControl } from "./controls/fe";
+import { FeControl, Fe3DTextControl } from "./controls/fe";
+import {
+  deriveExtrudeStack,
+  buildExtrudeSteps,
+  DEFAULT_EXTRUDE_DEPTH,
+} from "./controls/fe-3d-text";
 import InputPropertyNumber from "./ui/number";
 import { ArcPropertiesControl } from "./controls/arc-properties";
 import { ModeVectorEditModeProperties } from "./chunks/mode-vector";
@@ -1972,25 +1977,13 @@ function SectionMask({ node_id, editor }: { node_id: string; editor: Editor }) {
 }
 
 // TODO: need to validate feX supported effect types, only allow them, currently we are only relying on feDropShadow to validate if effects are supported.
-/**
- * Host-panel presentation opt-in for {@link SectionEffects}.
- *
- * `hideFirstTextShadow`: the Bible Helper panel renders its own inline
- * "Text shadow" section bound to `fe_shadows[0]` for text nodes — with this
- * set, the Effects section skips that entry for `tspan` nodes so the same
- * shadow doesn't appear in two places. Additional shadows and every other
- * effect still list here.
- */
-export const SectionEffectsPresentationContext = React.createContext<{
-  hideFirstTextShadow?: boolean;
-}>({});
+// (The former SectionEffectsPresentationContext / hideFirstTextShadow host
+// opt-in is gone: the Bible Helper "Text shadow" side-section was retired in
+// favor of the consolidated Effects list below — batch item 8, 2026-07-07.)
 
 function SectionEffects({ node_id }: { node_id: string }) {
   const backend = useBackendState();
   const instance = useCurrentEditor();
-  const { hideFirstTextShadow } = React.useContext(
-    SectionEffectsPresentationContext
-  );
   const {
     type,
     fe_shadows,
@@ -2018,14 +2011,36 @@ function SectionEffects({ node_id }: { node_id: string }) {
     if (fe_backdrop_blur) {
       effects.push(fe_backdrop_blur);
     }
-    if (fe_liquid_glass) {
-      effects.push(fe_liquid_glass);
-    }
     if (fe_noises) {
       effects.push(...fe_noises);
     }
+    if (fe_liquid_glass) {
+      effects.push(fe_liquid_glass);
+    }
     return effects;
   }, [fe_shadows, fe_blur, fe_backdrop_blur, fe_liquid_glass, fe_noises]);
+
+  // ── 3D text extrusion presentation (batch item 8, 2026-07-07) ────────
+  // A depth-N extrusion is stored as N extra sharp shadows in fe_shadows
+  // (see fe-3d-text.ts). Listing those raw sprayed N "Shadow" rows into
+  // this section — the reported bug. Present the stack as ONE synthetic
+  // "3D Text" row instead; the master shadow stays a normal Shadow row
+  // (it IS the text shadow — the old separate host section is gone).
+  const extrude = type === "tspan" ? deriveExtrudeStack(fe_shadows) : null;
+  const shadowCount = fe_shadows?.length ?? 0;
+
+  /** Rebuild the FULL effects array from a new fe_shadows list. */
+  const withShadows = useCallback(
+    (shadows: cg.FeShadow[]): cg.FilterEffect[] => {
+      const out: cg.FilterEffect[] = [...shadows];
+      if (fe_blur) out.push(fe_blur);
+      if (fe_backdrop_blur) out.push(fe_backdrop_blur);
+      if (fe_noises) out.push(...fe_noises);
+      if (fe_liquid_glass) out.push(fe_liquid_glass);
+      return out;
+    },
+    [fe_blur, fe_backdrop_blur, fe_liquid_glass, fe_noises]
+  );
 
   const onAddEffect = useCallback(() => {
     instance.commands.changeNodeFilterEffects(node_id, [
@@ -2037,16 +2052,37 @@ function SectionEffects({ node_id }: { node_id: string }) {
     ]);
   }, [effects, instance, node_id]);
 
-  // The BH panel owns fe_shadows[0] for text nodes (its "Text shadow"
-  // section) — skip it here so the same shadow isn't shown twice. Index math
-  // below maps visible rows back into the FULL effects array.
-  const hiddenCount =
-    hideFirstTextShadow && type === "tspan" && (fe_shadows?.length ?? 0) > 0
-      ? 1
-      : 0;
-  const visibleEffects = hiddenCount ? effects.slice(hiddenCount) : effects;
+  /** Convert this node's shadows into a 3D stack (dropdown → "3D Text"). */
+  const convertTo3D = useCallback(() => {
+    const master: cg.FeShadow = fe_shadows?.[0] ?? {
+      type: "shadow",
+      ...editor.config.DEFAULT_FE_SHADOW,
+    };
+    instance.commands.changeNodeFilterEffects(
+      node_id,
+      withShadows([master, ...buildExtrudeSteps(master, DEFAULT_EXTRUDE_DEPTH)])
+    );
+  }, [fe_shadows, instance, node_id, withShadows]);
 
-  const empty = visibleEffects.length === 0;
+  const setExtrudeDepth = useCallback(
+    (depth: number) => {
+      const master = fe_shadows?.[0];
+      if (!master) return;
+      instance.commands.changeNodeFilterEffects(
+        node_id,
+        withShadows([master, ...buildExtrudeSteps(master, depth)])
+      );
+    },
+    [fe_shadows, instance, node_id, withShadows]
+  );
+
+  // Visible rows: with an extrusion stack, fe_shadows[1..] collapse into one
+  // synthetic row rendered right after the master shadow row.
+  const visibleEffects = extrude
+    ? [effects[0], ...effects.slice(shadowCount)]
+    : effects;
+
+  const empty = visibleEffects.length === 0 && !extrude;
 
   return (
     <PropertySection
@@ -2065,26 +2101,75 @@ function SectionEffects({ node_id }: { node_id: string }) {
       {!empty && (
         <PropertySectionContent>
           {visibleEffects.map((effect, visibleIndex) => {
-            const index = visibleIndex + hiddenCount;
+            // Map the visible row back into the FULL effects array: with a
+            // collapsed stack, row 0 is fe_shadows[0] and later rows sit
+            // after the whole shadow block.
+            const index = extrude
+              ? visibleIndex === 0
+                ? 0
+                : visibleIndex - 1 + shadowCount
+              : visibleIndex;
+            const isMasterOfStack = extrude != null && index === 0;
             return (
-              <PropertyRow key={index}>
-                <FeControl
-                  value={effect}
-                  onValueChange={(value) => {
-                    instance.commands.changeNodeFilterEffects(node_id, [
-                      ...effects.slice(0, index),
-                      value,
-                      ...effects.slice(index + 1),
-                    ]);
-                  }}
-                  onRemove={() => {
-                    instance.commands.changeNodeFilterEffects(node_id, [
-                      ...effects.slice(0, index),
-                      ...effects.slice(index + 1),
-                    ]);
-                  }}
-                />
-              </PropertyRow>
+              <React.Fragment key={index}>
+                <PropertyRow>
+                  <FeControl
+                    value={effect}
+                    can3DText={type === "tspan"}
+                    onConvertTo3DText={convertTo3D}
+                    onValueChange={(value) => {
+                      // Editing the master of a 3D stack re-derives the
+                      // extrusion so direction/color edits track it.
+                      if (isMasterOfStack && value.type === "shadow") {
+                        instance.commands.changeNodeFilterEffects(
+                          node_id,
+                          withShadows([
+                            value as cg.FeShadow,
+                            ...buildExtrudeSteps(
+                              value as cg.FeShadow,
+                              extrude!.depth
+                            ),
+                          ])
+                        );
+                        return;
+                      }
+                      instance.commands.changeNodeFilterEffects(node_id, [
+                        ...effects.slice(0, index),
+                        value,
+                        ...effects.slice(index + 1),
+                      ]);
+                    }}
+                    onRemove={() => {
+                      // Removing the master removes its extrusion with it.
+                      if (isMasterOfStack) {
+                        instance.commands.changeNodeFilterEffects(
+                          node_id,
+                          withShadows([])
+                        );
+                        return;
+                      }
+                      instance.commands.changeNodeFilterEffects(node_id, [
+                        ...effects.slice(0, index),
+                        ...effects.slice(index + 1),
+                      ]);
+                    }}
+                  />
+                </PropertyRow>
+                {isMasterOfStack && (
+                  <PropertyRow>
+                    <Fe3DTextControl
+                      depth={extrude!.depth}
+                      onDepthChange={setExtrudeDepth}
+                      onRemove={() =>
+                        instance.commands.changeNodeFilterEffects(
+                          node_id,
+                          withShadows([extrude!.master])
+                        )
+                      }
+                    />
+                  </PropertyRow>
+                )}
+              </React.Fragment>
             );
           })}
         </PropertySectionContent>
