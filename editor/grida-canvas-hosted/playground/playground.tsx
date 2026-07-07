@@ -1918,6 +1918,7 @@ function Consumer({
                         filekey={filekey}
                         workspace={workspace}
                         runProgrammaticEdit={runProgrammaticEdit}
+                        onSaved={onSaved}
                       />
                     )}
                     <EditorSurfaceClipboardSyncProvider />
@@ -2409,6 +2410,7 @@ function SidebarLeft({
   filekey,
   workspace = "theme",
   runProgrammaticEdit = (fn) => fn(),
+  onSaved,
 }: {
   toggleVisibility?: () => void;
   toggleMinimal?: () => void;
@@ -2432,6 +2434,11 @@ function SidebarLeft({
    *  (the workspace stamp reconcile below). Defaults to a plain call so
    *  non-BH usages are unaffected. */
   runProgrammaticEdit?: (fn: () => void) => void;
+  /** Marks the session clean after a successful Save Theme / Save Theme
+   *  Bundle. Without this only Cmd+S reset the dirty flag, so the host
+   *  still asked "Exit without saving?" after a saved bundle AND offered a
+   *  stale crash-restore at next boot (2026-07-07 report, item 6). */
+  onSaved?: () => void;
 }) {
   const editor = useCurrentEditor();
   const { activeSceneId, scenesCount, serviceReference, stageId, bundleName } =
@@ -2636,6 +2643,10 @@ function SidebarLeft({
         parentOrigin,
         documentPayload ? [documentPayload.archiveBytes] : []
       );
+      // The session is clean now: reset the dirty flag so the host's
+      // exit-without-saving confirm and boot-time restore breadcrumb both
+      // stand down (they key off the bible-helper-editor-dirty broadcast).
+      onSaved?.();
       toast.success(
         `Saved ${savedLabel} "${payload.scene.name}" to Bible Helper.`
       );
