@@ -176,6 +176,14 @@ import {
   type RhemaVisibilityCondition,
   type RhemaWorkspace,
 } from "./rhema-contract";
+import {
+  RHEMA_BACKGROUND_VIDEO_KEY,
+  applyBgVideoPoster,
+  findBgVideoPosterIdsInScene,
+  hideBgVideoPostersDuring,
+  readPosterSourceBlobKey,
+  requestBgVideoPosterFromHost,
+} from "./rhema-bg-video-poster";
 import { STAGE_COMPONENTS } from "./stage-components";
 import { StageComponentsToolbar } from "./stage-toolbar";
 import { STAGE_TEMPLATES } from "./stage-templates";
@@ -2441,82 +2449,98 @@ function SidebarLeft({
   onSaved?: () => void;
 }) {
   const editor = useCurrentEditor();
-  const { activeSceneId, scenesCount, serviceReference, stageId, bundleName } =
-    useEditorState(editor, (state) => {
-      const sceneId = state.scene_id;
-      const sceneIds = state.document.scenes_ref;
-      const sceneUserData = sceneId
-        ? ((state.document.metadata?.[sceneId]?.userdata as
-            | Record<string, unknown>
-            | undefined) ?? {})
-        : {};
-      const serviceReferenceRaw = sceneUserData[RHEMA_SERVICE_REFERENCE_KEY];
-      const serviceReference =
-        serviceReferenceRaw === "preacher" || serviceReferenceRaw === "singer"
-          ? serviceReferenceRaw
-          : null;
-      const childIds = sceneId ? (state.document.links[sceneId] ?? []) : [];
-      const stageIdRaw = sceneUserData.rhema_stage_node_id;
-      const explicitStageId =
-        typeof stageIdRaw === "string" ? stageIdRaw : null;
-      const explicitStageNode = explicitStageId
-        ? state.document.nodes[explicitStageId]
-        : undefined;
-      const stageId =
-        (explicitStageId &&
-        childIds.includes(explicitStageId) &&
-        isRhemaStageCandidate(explicitStageNode)
-          ? explicitStageId
-          : null) ??
-        childIds.find((id) => {
-          return isRhemaStageCandidate(state.document.nodes[id]);
-        }) ??
-        null;
-
-      // Bundle name lives on every scene's userData (no document-level userdata
-      // in Grida's schema). Read the first non-empty value — all scenes are
-      // kept in sync on rename.
-      let bundleName: string | null = null;
-      for (const sid of sceneIds) {
-        const ud = state.document.metadata?.[sid]?.userdata as
+  const {
+    activeSceneId,
+    scenesCount,
+    serviceReference,
+    stageId,
+    bundleName,
+    backgroundVideoBlobKey,
+  } = useEditorState(editor, (state) => {
+    const sceneId = state.scene_id;
+    const sceneIds = state.document.scenes_ref;
+    const sceneUserData = sceneId
+      ? ((state.document.metadata?.[sceneId]?.userdata as
           | Record<string, unknown>
-          | undefined;
-        const raw = ud?.[RHEMA_BUNDLE_NAME_KEY];
-        if (typeof raw === "string" && raw.trim()) {
-          bundleName = raw;
-          break;
-        }
+          | undefined) ?? {})
+      : {};
+    const serviceReferenceRaw = sceneUserData[RHEMA_SERVICE_REFERENCE_KEY];
+    const serviceReference =
+      serviceReferenceRaw === "preacher" || serviceReferenceRaw === "singer"
+        ? serviceReferenceRaw
+        : null;
+    const childIds = sceneId ? (state.document.links[sceneId] ?? []) : [];
+    const stageIdRaw = sceneUserData.rhema_stage_node_id;
+    const explicitStageId = typeof stageIdRaw === "string" ? stageIdRaw : null;
+    const explicitStageNode = explicitStageId
+      ? state.document.nodes[explicitStageId]
+      : undefined;
+    const stageId =
+      (explicitStageId &&
+      childIds.includes(explicitStageId) &&
+      isRhemaStageCandidate(explicitStageNode)
+        ? explicitStageId
+        : null) ??
+      childIds.find((id) => {
+        return isRhemaStageCandidate(state.document.nodes[id]);
+      }) ??
+      null;
+
+    // Bundle name lives on every scene's userData (no document-level userdata
+    // in Grida's schema). Read the first non-empty value — all scenes are
+    // kept in sync on rename.
+    let bundleName: string | null = null;
+    for (const sid of sceneIds) {
+      const ud = state.document.metadata?.[sid]?.userdata as
+        | Record<string, unknown>
+        | undefined;
+      const raw = ud?.[RHEMA_BUNDLE_NAME_KEY];
+      if (typeof raw === "string" && raw.trim()) {
+        bundleName = raw;
+        break;
       }
+    }
 
-      // Workspace on the active scene.
-      const rawWorkspaceUserData = sceneUserData[RHEMA_WORKSPACE_KEY];
-      const activeWorkspace: RhemaWorkspace =
-        rawWorkspaceUserData === "stage"
-          ? "stage"
-          : rawWorkspaceUserData === "slide"
-            ? "slide"
-            : "theme";
+    // Workspace on the active scene.
+    const rawWorkspaceUserData = sceneUserData[RHEMA_WORKSPACE_KEY];
+    const activeWorkspace: RhemaWorkspace =
+      rawWorkspaceUserData === "stage"
+        ? "stage"
+        : rawWorkspaceUserData === "slide"
+          ? "slide"
+          : "theme";
 
-      // Active scene name — used by slide-workspace as the slide label
-      // (single source of truth: rename the label → rename the scene →
-      // saved payload's imported.name carries the new value to BH).
-      const activeSceneNode = sceneId ? state.document.nodes[sceneId] : null;
-      const activeSceneName =
-        activeSceneNode && (activeSceneNode as { name?: string }).name
-          ? (activeSceneNode as { name: string }).name
-          : null;
+    // Active scene name — used by slide-workspace as the slide label
+    // (single source of truth: rename the label → rename the scene →
+    // saved payload's imported.name carries the new value to BH).
+    const activeSceneNode = sceneId ? state.document.nodes[sceneId] : null;
+    const activeSceneName =
+      activeSceneNode && (activeSceneNode as { name?: string }).name
+        ? (activeSceneNode as { name: string }).name
+        : null;
 
-      return {
-        activeSceneId: sceneId ?? null,
-        activeSceneName,
-        scenesCount: sceneIds.length,
-        sceneIds: [...sceneIds],
-        serviceReference,
-        stageId,
-        bundleName,
-        activeWorkspace,
-      };
-    });
+    // Background-video reference on the active scene — drives the poster
+    // placeholder sync below (the wasm canvas can't decode video).
+    const bgVideoRaw = sceneUserData[RHEMA_BACKGROUND_VIDEO_KEY] as
+      | { blobKey?: unknown }
+      | undefined;
+    const backgroundVideoBlobKey =
+      bgVideoRaw && typeof bgVideoRaw.blobKey === "string"
+        ? bgVideoRaw.blobKey
+        : null;
+
+    return {
+      activeSceneId: sceneId ?? null,
+      activeSceneName,
+      scenesCount: sceneIds.length,
+      sceneIds: [...sceneIds],
+      serviceReference,
+      stageId,
+      bundleName,
+      activeWorkspace,
+      backgroundVideoBlobKey,
+    };
+  });
 
   const exportRhemaJson = useCallback(() => {
     if (!isBibleHelper || !activeSceneId) return;
@@ -2533,6 +2557,57 @@ function SidebarLeft({
       .replace(/^-+|-+$/g, "");
     saveAs(blob, `${sceneName || "theme"}.rhema.json`);
   }, [activeSceneId, editor.state.document, isBibleHelper]);
+
+  // Background-video POSTER sync (2026-07-09, issue 2): whenever the active
+  // scene references a background video and its poster placeholder is
+  // missing or stale (video replaced), fetch the poster frame from the BH
+  // host and paint it as a locked image rect at the bottom of the stage —
+  // so the operator designs against the video instead of a clear stage.
+  // Programmatic housekeeping: never arms the dirty flag / crash draft.
+  // Covers BOTH the fresh-upload path (userdata stamp re-runs this effect)
+  // and reopen (poster rides the saved doc; only re-fetched if lost).
+  useEffect(() => {
+    if (!isBibleHelper || !activeSceneId || !parentOrigin) return;
+    if (!backgroundVideoBlobKey) return;
+    const havePoster =
+      findBgVideoPosterIdsInScene(editor.state.document, activeSceneId).length >
+      0;
+    if (
+      havePoster &&
+      readPosterSourceBlobKey(editor, activeSceneId) === backgroundVideoBlobKey
+    ) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const dataUri = await requestBgVideoPosterFromHost(
+        parentOrigin,
+        backgroundVideoBlobKey
+      );
+      if (cancelled || !dataUri) return;
+      try {
+        await applyBgVideoPoster(
+          editor,
+          activeSceneId,
+          dataUri,
+          backgroundVideoBlobKey,
+          runProgrammaticEdit
+        );
+      } catch (err) {
+        console.warn("[bg-video] poster apply failed", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isBibleHelper,
+    activeSceneId,
+    parentOrigin,
+    backgroundVideoBlobKey,
+    editor,
+    runProgrammaticEdit,
+  ]);
 
   const saveThemeToBibleHelper = useCallback(async () => {
     if (!isBibleHelper || !activeSceneId) return;
@@ -2582,9 +2657,14 @@ function SidebarLeft({
         exportTargetId,
         stageId ? "(stage)" : "(scene fallback)"
       );
-      const svgBytes = await editor.exportNodeAs(exportTargetId, "SVG", {
-        format: "SVG",
-      });
+      // Poster placeholders are editor chrome — hidden for the export so a
+      // frozen video frame never bakes into backdropSvg (the live output
+      // plays the real video under the layers).
+      const svgBytes = await hideBgVideoPostersDuring(
+        editor,
+        runProgrammaticEdit,
+        () => editor.exportNodeAs(exportTargetId, "SVG", { format: "SVG" })
+      );
       const svgText =
         typeof svgBytes === "string"
           ? svgBytes
@@ -2754,9 +2834,12 @@ function SidebarLeft({
         );
       }
       try {
-        const svgBytes = await editor.exportNodeAs(stageNodeId, "SVG", {
-          format: "SVG",
-        });
+        // Poster placeholders stay out of backdropSvg (see the flat save).
+        const svgBytes = await hideBgVideoPostersDuring(
+          editor,
+          runProgrammaticEdit,
+          () => editor.exportNodeAs(stageNodeId, "SVG", { format: "SVG" })
+        );
         const svgText =
           typeof svgBytes === "string"
             ? svgBytes
@@ -2936,10 +3019,7 @@ function SidebarLeft({
       runProgrammaticEdit(() => {
         const doc = editor.state.document;
         for (const sid of doc.scenes_ref) {
-          const ud = (editor.getUserData(sid) ?? {}) as Record<
-            string,
-            unknown
-          >;
+          const ud = (editor.getUserData(sid) ?? {}) as Record<string, unknown>;
           if (ud[RHEMA_WORKSPACE_KEY] !== workspace) {
             editor.setUserData(sid, {
               ...ud,

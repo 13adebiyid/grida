@@ -437,13 +437,28 @@ function resolveNodeTextShadow(node: Record<string, unknown>): string | null {
     if (!raw || typeof raw !== "object") continue;
     const sh = raw as Record<string, unknown>;
     if (sh.inset === true) continue;
+    if (sh.active === false) continue;
     const color = sh.color
       ? rgbaRecordToCss(sh.color as Record<string, unknown>)
       : null;
     if (!color) continue;
-    const offset = Array.isArray(sh.offset) ? sh.offset : [0, 0];
-    const dx = typeof offset[0] === "number" ? offset[0] : 0;
-    const dy = typeof offset[1] === "number" ? offset[1] : 0;
+    // Schema (cg.IFeShadow) carries offsets as `dx`/`dy` — reading the
+    // nonexistent `offset` tuple collapsed EVERY shadow to 0,0 and made the
+    // 3D-text extrusion stack (sharp dx/dy steps, blur 0) invisible on live
+    // output. Keep `offset` as a legacy fallback for old persisted docs.
+    const legacyOffset = Array.isArray(sh.offset) ? sh.offset : [0, 0];
+    const dx =
+      typeof sh.dx === "number"
+        ? sh.dx
+        : typeof legacyOffset[0] === "number"
+          ? legacyOffset[0]
+          : 0;
+    const dy =
+      typeof sh.dy === "number"
+        ? sh.dy
+        : typeof legacyOffset[1] === "number"
+          ? legacyOffset[1]
+          : 0;
     const blur = typeof sh.blur === "number" ? sh.blur : 0;
     parts.push(`${dx}px ${dy}px ${blur}px ${color}`);
   }
@@ -490,8 +505,16 @@ function extractReactTextCss(
     return null;
   }
   const out: Record<string, string | number> = {};
+  const hasExplicitLineHeight =
+    typeof (node as Record<string, unknown>).line_height === "number";
   for (const [k, v] of Object.entries(reactStyle)) {
     if (k === "fontSize" || k === "color") continue;
+    // toReactTextStyle emits lineHeight:"normal" when the node has no
+    // explicit line_height — but DOM "normal" ≠ skia's paragraph default,
+    // and this css blob is spread OVER BH's tuned structured defaults
+    // (apply-layer-style), so the implicit value made live text taller than
+    // the editor canvas. Only export a lineHeight the operator actually set.
+    if (k === "lineHeight" && !hasExplicitLineHeight) continue;
     if (typeof v === "string" || typeof v === "number") out[k] = v;
   }
   return Object.keys(out).length > 0 ? out : null;
@@ -743,22 +766,43 @@ function extractEffectLayers(
     if (!node || typeof node !== "object") continue;
     if (node.type === "text") continue; // text styling handled separately
 
+    // Schema agreement (same class as the fe_shadows dx/dy bug): backdrop
+    // blur's radius is NESTED (cg.FeBackdropBlur.blur.radius), noise lives on
+    // the PLURAL `fe_noises` array, and liquid glass has no radius at all —
+    // the old flat reads (`bd.radius` / `lg.radius` / `node.fe_noise`) never
+    // matched, so none of these effects ever reached live output.
     const bd = node.fe_backdrop_blur as Record<string, unknown> | undefined;
     const lg = node.fe_liquid_glass as Record<string, unknown> | undefined;
-    const noiseRaw = node.fe_noise as Record<string, unknown> | undefined;
+    const noisesRaw = node.fe_noises;
+    const noiseRaw =
+      Array.isArray(noisesRaw) && noisesRaw.length > 0
+        ? ((noisesRaw.find(
+            (n) =>
+              n &&
+              typeof n === "object" &&
+              (n as Record<string, unknown>).active !== false
+          ) ?? null) as Record<string, unknown> | null)
+        : null;
 
+    const bdBlurRec =
+      bd && bd.active !== false
+        ? (bd.blur as Record<string, unknown> | undefined)
+        : undefined;
     const backdropBlur =
-      bd && typeof bd.radius === "number" && bd.radius > 0
-        ? bd.radius
-        : lg && typeof lg.radius === "number" && lg.radius > 0
-          ? lg.radius
+      bdBlurRec && typeof bdBlurRec.radius === "number" && bdBlurRec.radius > 0
+        ? bdBlurRec.radius
+        : lg && (lg as Record<string, unknown>).active !== false
+          ? // Liquid glass has no blur radius in-schema; approximate the
+            // frosted look on live output with a fixed backdrop blur.
+            12
           : null;
     const noise =
-      noiseRaw && noiseRaw.color
+      noiseRaw && (noiseRaw.color ?? noiseRaw.color1)
         ? {
             color:
-              rgbaRecordToCss(noiseRaw.color as Record<string, unknown>) ??
-              "rgba(0,0,0,0.15)",
+              rgbaRecordToCss(
+                (noiseRaw.color ?? noiseRaw.color1) as Record<string, unknown>
+              ) ?? "rgba(0,0,0,0.15)",
             opacity:
               typeof noiseRaw.density === "number"
                 ? Math.max(0.05, Math.min(1, noiseRaw.density))
@@ -1055,20 +1099,29 @@ function splitTopLevelCommas(input: string): string[] {
 
 /** Inverse of resolveNodeTextShadow: a CSS `text-shadow` string ->
  *  Grida fe_shadows[]. Parses the "<dx>px <dy>px <blur>px <color>" form the
- *  exporter emits; anything else is skipped (best-effort, never throws). */
+ *  exporter emits; anything else is skipped (best-effort, never throws).
+ *  Emits the REAL cg.FeShadow shape (`type`/`dx`/`dy`/`spread`) — the old
+ *  `{offset: [..]}` shape wasn't schema and seeded the editor shadows it
+ *  could neither render nor round-trip (3D-text loss both directions). */
 function parseTextShadowToFeShadows(
   textShadow: string | null | undefined
 ): Array<{
+  type: "shadow";
   color: MaterializedRgba;
-  offset: [number, number];
+  dx: number;
+  dy: number;
   blur: number;
+  spread: number;
   inset: false;
 }> {
   if (typeof textShadow !== "string" || !textShadow.trim()) return [];
   const out: Array<{
+    type: "shadow";
     color: MaterializedRgba;
-    offset: [number, number];
+    dx: number;
+    dy: number;
     blur: number;
+    spread: number;
     inset: false;
   }> = [];
   for (const part of splitTopLevelCommas(textShadow)) {
@@ -1077,9 +1130,12 @@ function parseTextShadowToFeShadows(
     const color = cssColorToRgba(m[4]);
     if (!color) continue;
     out.push({
+      type: "shadow",
       color,
-      offset: [Number.parseFloat(m[1]), Number.parseFloat(m[2])],
+      dx: Number.parseFloat(m[1]),
+      dy: Number.parseFloat(m[2]),
       blur: Number.parseFloat(m[3]),
+      spread: 0,
       inset: false,
     });
   }

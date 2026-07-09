@@ -98,6 +98,79 @@ describe("buildRhemaThemeRuntimeJson", () => {
     expect(layer?.style.letterSpacing).toBe(0.02);
     expect(layer?.style.color).toContain("rgba(");
   });
+
+  it("extracts fe_shadows dx/dy — the 3D-text extrusion stack survives to text-shadow (2026-07-09)", () => {
+    // Schema shape written by the editor's 3D Text control: sharp offset
+    // steps, blur 0. The old extractor read a nonexistent `offset` tuple,
+    // collapsing every step to `0px 0px` — 3D text was invisible on live.
+    const sceneId = "scene-1";
+    const stageId = "stage-1";
+    const tspanId = "tspan-1";
+    const document = {
+      nodes: {
+        [sceneId]: { id: sceneId, type: "scene", name: "Theme A" },
+        [stageId]: {
+          id: stageId,
+          type: "container",
+          name: "Canvas 1920x1080",
+          layout_target_width: 1920,
+          layout_target_height: 1080,
+        },
+        [tspanId]: {
+          id: tspanId,
+          type: "tspan",
+          name: "Scripture",
+          text: "For God so loved the world",
+          font_size: 84,
+          fe_shadows: [
+            {
+              type: "shadow",
+              dx: 2,
+              dy: 2,
+              blur: 0,
+              spread: 0,
+              color: { r: 0, g: 0, b: 0, a: 1 },
+            },
+            {
+              type: "shadow",
+              dx: 4,
+              dy: 4,
+              blur: 0,
+              spread: 0,
+              color: { r: 0, g: 0, b: 0, a: 1 },
+            },
+            // Inactive steps are dropped, not rendered at 0,0.
+            {
+              type: "shadow",
+              dx: 6,
+              dy: 6,
+              blur: 0,
+              spread: 0,
+              color: { r: 0, g: 0, b: 0, a: 1 },
+              active: false,
+            },
+          ],
+        },
+      },
+      links: {
+        [sceneId]: [stageId, tspanId],
+        [stageId]: [],
+        [tspanId]: [],
+      },
+      metadata: {
+        [sceneId]: {
+          userdata: { rhema_binding_scripture_node_id: tspanId },
+        },
+      },
+    } as unknown as Parameters<typeof buildRhemaThemeRuntimeJson>[0];
+
+    const runtime = buildRhemaThemeRuntimeJson(document, sceneId);
+    const layer = runtime.textLayers.find((entry) => entry.id === tspanId);
+    expect(layer?.style.textShadow).toContain("2px 2px 0px");
+    expect(layer?.style.textShadow).toContain("4px 4px 0px");
+    expect(layer?.style.textShadow).not.toContain("6px 6px");
+    expect(layer?.style.textShadow).not.toContain("0px 0px 0px");
+  });
 });
 
 describe("materializeRhemaThemeDocument (inverse of buildRhemaThemeRuntimeJson)", () => {
