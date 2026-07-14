@@ -13,6 +13,10 @@ import { css } from "@/grida-canvas-utils/css";
 import grida from "@grida/schema";
 import type cg from "@grida/cg";
 import assert from "assert";
+import {
+  animationValuesToStyle,
+  useAnimationNodeSample,
+} from "./animation-sample";
 
 class RendererNotFound extends Error {
   constructor(message: string) {
@@ -63,6 +67,7 @@ export function NodeElement<P extends Record<string, unknown>>({
 
   const node = useNode(node_id);
   const computed = useComputedNode(node_id);
+  const animation = useAnimationNodeSample(node_id);
 
   const { component_id, template_id } = node;
   const children = state.graph[node_id];
@@ -138,7 +143,7 @@ export function NodeElement<P extends Record<string, unknown>>({
     fill: DEFAULT_FILL ?? computed.fill,
     loop: node.loop,
     muted: node.muted,
-    volume: node.volume,
+    volume: animation.values?.volume ?? node.volume,
     autoplay: node.autoplay,
     trim_start_seconds: node.trim_start_seconds,
     trim_end_seconds: node.trim_end_seconds,
@@ -176,6 +181,17 @@ export function NodeElement<P extends Record<string, unknown>>({
   if (!node.active) return <></>;
 
   const { opacity: _opacity, z_index: _z_index, ...props } = renderprops;
+  const baseStyle = css.toReactCSSProperties(
+    renderprops as grida.program.nodes.i.IComputedCSSStylable,
+    {
+      fill: fillings[node.type],
+      hasTextStyle: node.type === "tspan",
+    }
+  );
+  const animationStyle = animationValuesToStyle(
+    animation.values,
+    baseStyle.transform
+  );
 
   return (
     <HrefWrapper href={computed.href} target={node.target}>
@@ -190,13 +206,8 @@ export function NodeElement<P extends Record<string, unknown>>({
             ["data-grida-node-type"]: node.type,
           } satisfies grida.program.document.INodeHtmlDocumentQueryDataAttributes),
           style: {
-            ...css.toReactCSSProperties(
-              renderprops as grida.program.nodes.i.IComputedCSSStylable,
-              {
-                fill: fillings[node.type],
-                hasTextStyle: node.type === "tspan",
-              }
-            ),
+            ...baseStyle,
+            ...animationStyle,
             // hard override user-select
             userSelect: state.editable ? "none" : undefined,
             // hide this node when in surface edit mode

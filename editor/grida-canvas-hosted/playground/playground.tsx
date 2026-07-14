@@ -119,6 +119,11 @@ import { editor } from "@/grida-canvas";
 import { editor as editorNamespace } from "@/grida-canvas";
 import { dq } from "@/grida-canvas/query";
 import { ExternalAssetUrlProvider } from "@/grida-canvas-react-renderer-dom/nodes/external-asset-url";
+import { AnimationSampleProvider } from "@/grida-canvas-react-renderer-dom/nodes/animation-sample";
+import {
+  NativeAnimationInspector,
+  useNativeAnimationPreview,
+} from "./native-animation-inspector";
 import { SceneThumbnailRenderer } from "./scene-thumbnail-renderer";
 import useDisableSwipeBack from "@/grida-canvas-react/viewport/hooks/use-disable-browser-swipe-back";
 import { WindowGlobalCurrentEditorProvider } from "@/grida-canvas-react/devtools/global-api-host";
@@ -1670,6 +1675,9 @@ function Consumer({
     setRightSidebarTab,
   } = useUILayout();
   const instance = useCurrentEditor();
+  const animationPreview = useNativeAnimationPreview(instance);
+  const currentSceneNeedsDom =
+    currentSceneHasVideo || animationPreview.hasAnimations;
   const opfs = usePlaygroundOPFS(filekey);
   const debug = useEditorState(instance, (state) => state.debug);
   const sceneMeta = useEditorState(instance, (state) => {
@@ -2063,31 +2071,45 @@ function Consumer({
                             {backend === "canvas" && (
                               <Canvas
                                 ref={canvasRef}
-                                hidden={currentSceneHasVideo}
+                                hidden={currentSceneNeedsDom}
                               />
                             )}
-                            {backend === "canvas" && currentSceneHasVideo && (
+                            {backend === "canvas" && currentSceneNeedsDom && (
                               <ExternalAssetUrlProvider
                                 locations={externalAssetUrls}
                               >
-                                <div
-                                  className="absolute inset-0 pointer-events-none"
-                                  aria-hidden="true"
+                                <AnimationSampleProvider
+                                  sample={animationPreview.sample}
                                 >
-                                  <AutoInitialFitTransformer>
-                                    <StandaloneSceneContent primary={false} />
-                                  </AutoInitialFitTransformer>
-                                </div>
+                                  <div
+                                    className="absolute inset-0 pointer-events-none"
+                                    aria-hidden="true"
+                                  >
+                                    <AutoInitialFitTransformer>
+                                      <StandaloneSceneContent primary={false} />
+                                    </AutoInitialFitTransformer>
+                                  </div>
+                                </AnimationSampleProvider>
                               </ExternalAssetUrlProvider>
                             )}
                             {backend === "dom" && (
                               <ExternalAssetUrlProvider
                                 locations={externalAssetUrls}
                               >
-                                <AutoInitialFitTransformer>
-                                  <StandaloneSceneContent />
-                                </AutoInitialFitTransformer>
+                                <AnimationSampleProvider
+                                  sample={animationPreview.sample}
+                                >
+                                  <AutoInitialFitTransformer>
+                                    <StandaloneSceneContent />
+                                  </AutoInitialFitTransformer>
+                                </AnimationSampleProvider>
                               </ExternalAssetUrlProvider>
+                            )}
+                            {isBibleHelper && (
+                              <NativeAnimationInspector
+                                instance={instance}
+                                preview={animationPreview}
+                              />
                             )}
                             {(isBibleHelper || ui.toolbar_bottom) && (
                               <>

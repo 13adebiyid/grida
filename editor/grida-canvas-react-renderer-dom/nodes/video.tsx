@@ -3,6 +3,7 @@ import queryattributes from "./utils/attributes";
 import grida from "@grida/schema";
 import { css } from "@/grida-canvas-utils/css";
 import { useExternalAssetUrl } from "./external-asset-url";
+import { useAnimationNodeSample } from "./animation-sample";
 
 export const VideoWidget = ({
   src,
@@ -24,10 +25,17 @@ export const VideoWidget = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const resolvedSrc = useExternalAssetUrl(src, asset_digest);
   const resolvedPoster = useExternalAssetUrl(poster, poster_asset_digest);
+  const animation = useAnimationNodeSample(props.id);
+  const appliedMediaActions = useRef(new Set<string>());
+  const appliedSceneVersion = useRef(animation.sceneVersion);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+    if (appliedSceneVersion.current !== animation.sceneVersion) {
+      appliedSceneVersion.current = animation.sceneVersion;
+      appliedMediaActions.current.clear();
+    }
     video.volume = Math.max(0, Math.min(1, volume ?? 0));
     const start = Math.max(0, trim_start_seconds ?? 0);
     const end = trim_end_seconds ?? -1;
@@ -53,6 +61,30 @@ export const VideoWidget = ({
       video.removeEventListener("timeupdate", enforceTrim);
     };
   }, [loop, trim_end_seconds, trim_start_seconds, volume]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    for (const action of animation.mediaActions) {
+      const key = `${animation.sceneVersion}:${animation.buildIndex}:${action.clipId}:${action.action}:${action.value}`;
+      if (appliedMediaActions.current.has(key)) continue;
+      appliedMediaActions.current.add(key);
+      switch (action.action) {
+        case "play":
+          void video.play().catch(() => undefined);
+          break;
+        case "pause":
+          video.pause();
+          break;
+        case "seek":
+          video.currentTime = Math.max(0, action.value);
+          break;
+        case "set-loop":
+          video.loop = action.value !== 0;
+          break;
+      }
+    }
+  }, [animation]);
 
   return (
     <div
