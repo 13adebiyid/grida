@@ -1191,6 +1191,60 @@ describe("format roundtrip", () => {
     });
   });
 
+  describe("AnimationRepository", () => {
+    it("roundtrips typed build dependencies and property tracks", () => {
+      const sceneId = "0-1";
+      const nodeId = "0-2";
+      const doc = createDocument(sceneId, {
+        [nodeId]: baseRectangle(nodeId),
+      });
+      doc.animations = {
+        enter: {
+          id: "enter",
+          scene_id: sceneId,
+          target_node_id: nodeId,
+          phase: "enter",
+          trigger: "operator-advance",
+          depends_on: [],
+          order: 1,
+          delay_seconds: 0.25,
+          duration_seconds: 0.75,
+          easing: "ease-out",
+          fill: "forwards",
+          iterations: 1,
+          tracks: [
+            { property: "opacity", from: 0, to: 1 },
+            { property: "translation-x", from: -100, to: 0 },
+          ],
+          media_action: "none",
+          media_value: 0,
+        },
+        emphasize: {
+          id: "emphasize",
+          scene_id: sceneId,
+          target_node_id: nodeId,
+          phase: "emphasis",
+          trigger: "after-previous",
+          depends_on: ["enter"],
+          order: 2,
+          delay_seconds: 0,
+          duration_seconds: 1,
+          easing: "ease-in-out",
+          fill: "both",
+          iterations: 2,
+          tracks: [{ property: "scale-x", from: 1, to: 1.1 }],
+          media_action: "none",
+          media_value: 0,
+          cue_id: "cue-2",
+        },
+      };
+
+      const bytes = format.document.encode.toFlatbuffer(doc);
+      const decoded = format.document.decode.fromFlatbuffer(bytes);
+      expect(decoded.animations).toEqual(doc.animations);
+    });
+  });
+
   describe("cg.TextAlign", () => {
     it.each([
       ["left", "left"],

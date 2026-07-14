@@ -1670,6 +1670,41 @@ table ExternalAsset {
   poster_digest:string (id: 8);
 }
 
+enum AnimationPhase:ubyte { Enter = 0, Emphasis = 1, Exit = 2, MediaAction = 3, SceneTransition = 4 }
+enum AnimationTrigger:ubyte { SceneEnter = 0, OperatorAdvance = 1, WithPrevious = 2, AfterPrevious = 3, ExplicitCue = 4 }
+enum AnimationEasing:ubyte { Linear = 0, EaseIn = 1, EaseOut = 2, EaseInOut = 3, StepStart = 4, StepEnd = 5 }
+enum AnimationFill:ubyte { None = 0, Forwards = 1, Backwards = 2, Both = 3 }
+enum AnimationProperty:ubyte { Opacity = 0, TranslationX = 1, TranslationY = 2, Rotation = 3, ScaleX = 4, ScaleY = 5, Volume = 6 }
+enum AnimationMediaAction:ubyte { None = 0, Play = 1, Pause = 2, Seek = 3, SetLoop = 4 }
+
+/// One typed scalar property track. Values are sampled deterministically by
+/// the logical-clock evaluator; browser animation events are never state.
+table AnimationTrack {
+  property:AnimationProperty (id: 0);
+  from_value:double (id: 1);
+  to_value:double (id: 2);
+}
+
+/// Generic native build/animation clip shared by authored and imported work.
+table AnimationClip {
+  id:string (required, id: 0);
+  scene_id:string (required, id: 1);
+  target_node_id:string (id: 2);
+  phase:AnimationPhase (id: 3);
+  trigger:AnimationTrigger (id: 4);
+  depends_on:[string] (id: 5);
+  order:uint (id: 6);
+  delay_seconds:double (id: 7);
+  duration_seconds:double (id: 8);
+  easing:AnimationEasing (id: 9);
+  fill:AnimationFill = Forwards (id: 10);
+  iterations:uint = 1 (id: 11);
+  tracks:[AnimationTrack] (id: 12);
+  media_action:AnimationMediaAction (id: 13);
+  media_value:double (id: 14);
+  cue_id:string (id: 15);
+}
+
 table CanvasDocument {
   /// Schema version string (keep in sync with TS `grida.program.document.SCHEMA_VERSION`).
   schema_version:string (id: 0);
@@ -1691,6 +1726,9 @@ table CanvasDocument {
   /// Old readers compare this with their supported schema and open the
   /// document read-only when they cannot safely preserve it.
   minimum_reader_version:string (id: 4);
+
+  /// Versioned native animation/build repository, sorted by clip id.
+  animations:[AnimationClip] (id: 5);
 }
 
 /// Top-level root for all use cases: `.grida` files, single-scene transfers

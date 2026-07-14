@@ -23,7 +23,7 @@ use rustc_hash::FxHashMap;
 ///
 /// Keep in sync with the TS constant `grida.program.document.SCHEMA_VERSION`
 /// (`packages/grida-canvas-schema/grida.ts`).
-pub const SCHEMA_VERSION: &str = "0.91.2-beta+20260714";
+pub const SCHEMA_VERSION: &str = "0.91.3-beta+20260714";
 
 use crate::cg::{
     alignment::Alignment,
@@ -212,6 +212,33 @@ pub struct ExternalAssetRef {
     pub poster_digest: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimationTrackRef {
+    pub property: fbs::AnimationProperty,
+    pub from: f64,
+    pub to: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimationClipRef {
+    pub id: String,
+    pub scene_id: String,
+    pub target_node_id: Option<String>,
+    pub phase: fbs::AnimationPhase,
+    pub trigger: fbs::AnimationTrigger,
+    pub depends_on: Vec<String>,
+    pub order: u32,
+    pub delay_seconds: f64,
+    pub duration_seconds: f64,
+    pub easing: fbs::AnimationEasing,
+    pub fill: fbs::AnimationFill,
+    pub iterations: u32,
+    pub tracks: Vec<AnimationTrackRef>,
+    pub media_action: fbs::AnimationMediaAction,
+    pub media_value: f64,
+    pub cue_id: Option<String>,
+}
+
 pub struct DecodeResult {
     /// The decoded scenes (typically one).
     pub scenes: Vec<Scene>,
@@ -230,6 +257,8 @@ pub struct DecodeResult {
     pub minimum_reader_version: Option<String>,
     /// Host-resolved content-addressed asset repository.
     pub external_assets: HashMap<String, ExternalAssetRef>,
+    /// Generic native animation/build repository carried by the document.
+    pub animations: Vec<AnimationClipRef>,
 }
 
 /// Decode a `.grida` FlatBuffers binary into a `Scene`.
@@ -294,6 +323,46 @@ fn decode_all_inner(bytes: &[u8]) -> Result<DecodeResult, FbsDecodeError> {
                     poster_digest: asset.poster_digest().map(str::to_owned),
                 },
             );
+        }
+    }
+    let mut animations = Vec::new();
+    if let Some(clips) = document.animations() {
+        for clip in clips {
+            let depends_on = clip
+                .depends_on()
+                .map(|items| items.iter().map(str::to_owned).collect())
+                .unwrap_or_default();
+            let tracks = clip
+                .tracks()
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|track| AnimationTrackRef {
+                            property: track.property(),
+                            from: track.from_value(),
+                            to: track.to_value(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            animations.push(AnimationClipRef {
+                id: clip.id().to_owned(),
+                scene_id: clip.scene_id().to_owned(),
+                target_node_id: clip.target_node_id().map(str::to_owned),
+                phase: clip.phase(),
+                trigger: clip.trigger(),
+                depends_on,
+                order: clip.order(),
+                delay_seconds: clip.delay_seconds(),
+                duration_seconds: clip.duration_seconds(),
+                easing: clip.easing(),
+                fill: clip.fill(),
+                iterations: clip.iterations(),
+                tracks,
+                media_action: clip.media_action(),
+                media_value: clip.media_value(),
+                cue_id: clip.cue_id().map(str::to_owned),
+            });
         }
     }
 
@@ -602,6 +671,7 @@ fn decode_all_inner(bytes: &[u8]) -> Result<DecodeResult, FbsDecodeError> {
         schema_version,
         minimum_reader_version,
         external_assets,
+        animations,
     })
 }
 
@@ -2501,6 +2571,7 @@ pub fn encode(
             scenes: Some(scenes_vec),
             external_assets: None,
             minimum_reader_version: None,
+            animations: None,
         },
     );
 
@@ -2574,6 +2645,7 @@ pub fn encode_multi(
             scenes: Some(scenes_vec),
             external_assets: None,
             minimum_reader_version: None,
+            animations: None,
         },
     );
     let root = fbs::GridaFile::create(

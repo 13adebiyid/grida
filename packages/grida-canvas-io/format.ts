@@ -505,6 +505,91 @@ export namespace format {
       [fbs.BoxFit.Fill, "fill"],
       [fbs.BoxFit.None, "none"],
     ]);
+
+    export const ANIMATION_PHASE_ENCODE = new Map<
+      grida.program.document.animation.Phase,
+      fbs.AnimationPhase
+    >([
+      ["enter", fbs.AnimationPhase.Enter],
+      ["emphasis", fbs.AnimationPhase.Emphasis],
+      ["exit", fbs.AnimationPhase.Exit],
+      ["media-action", fbs.AnimationPhase.MediaAction],
+      ["scene-transition", fbs.AnimationPhase.SceneTransition],
+    ]);
+    export const ANIMATION_PHASE_DECODE = new Map(
+      [...ANIMATION_PHASE_ENCODE].map(([key, value]) => [value, key] as const)
+    );
+    export const ANIMATION_TRIGGER_ENCODE = new Map<
+      grida.program.document.animation.Trigger,
+      fbs.AnimationTrigger
+    >([
+      ["scene-enter", fbs.AnimationTrigger.SceneEnter],
+      ["operator-advance", fbs.AnimationTrigger.OperatorAdvance],
+      ["with-previous", fbs.AnimationTrigger.WithPrevious],
+      ["after-previous", fbs.AnimationTrigger.AfterPrevious],
+      ["explicit-cue", fbs.AnimationTrigger.ExplicitCue],
+    ]);
+    export const ANIMATION_TRIGGER_DECODE = new Map(
+      [...ANIMATION_TRIGGER_ENCODE].map(([key, value]) => [value, key] as const)
+    );
+    export const ANIMATION_EASING_ENCODE = new Map<
+      grida.program.document.animation.Easing,
+      fbs.AnimationEasing
+    >([
+      ["linear", fbs.AnimationEasing.Linear],
+      ["ease-in", fbs.AnimationEasing.EaseIn],
+      ["ease-out", fbs.AnimationEasing.EaseOut],
+      ["ease-in-out", fbs.AnimationEasing.EaseInOut],
+      ["step-start", fbs.AnimationEasing.StepStart],
+      ["step-end", fbs.AnimationEasing.StepEnd],
+    ]);
+    export const ANIMATION_EASING_DECODE = new Map(
+      [...ANIMATION_EASING_ENCODE].map(([key, value]) => [value, key] as const)
+    );
+    export const ANIMATION_FILL_ENCODE = new Map<
+      grida.program.document.animation.Fill,
+      fbs.AnimationFill
+    >([
+      ["none", fbs.AnimationFill.None],
+      ["forwards", fbs.AnimationFill.Forwards],
+      ["backwards", fbs.AnimationFill.Backwards],
+      ["both", fbs.AnimationFill.Both],
+    ]);
+    export const ANIMATION_FILL_DECODE = new Map(
+      [...ANIMATION_FILL_ENCODE].map(([key, value]) => [value, key] as const)
+    );
+    export const ANIMATION_PROPERTY_ENCODE = new Map<
+      grida.program.document.animation.Property,
+      fbs.AnimationProperty
+    >([
+      ["opacity", fbs.AnimationProperty.Opacity],
+      ["translation-x", fbs.AnimationProperty.TranslationX],
+      ["translation-y", fbs.AnimationProperty.TranslationY],
+      ["rotation", fbs.AnimationProperty.Rotation],
+      ["scale-x", fbs.AnimationProperty.ScaleX],
+      ["scale-y", fbs.AnimationProperty.ScaleY],
+      ["volume", fbs.AnimationProperty.Volume],
+    ]);
+    export const ANIMATION_PROPERTY_DECODE = new Map(
+      [...ANIMATION_PROPERTY_ENCODE].map(
+        ([key, value]) => [value, key] as const
+      )
+    );
+    export const ANIMATION_MEDIA_ACTION_ENCODE = new Map<
+      grida.program.document.animation.MediaAction,
+      fbs.AnimationMediaAction
+    >([
+      ["none", fbs.AnimationMediaAction.None],
+      ["play", fbs.AnimationMediaAction.Play],
+      ["pause", fbs.AnimationMediaAction.Pause],
+      ["seek", fbs.AnimationMediaAction.Seek],
+      ["set-loop", fbs.AnimationMediaAction.SetLoop],
+    ]);
+    export const ANIMATION_MEDIA_ACTION_DECODE = new Map(
+      [...ANIMATION_MEDIA_ACTION_ENCODE].map(
+        ([key, value]) => [value, key] as const
+      )
+    );
   }
 
   /**
@@ -5456,6 +5541,65 @@ export namespace format {
         const minimumReaderVersionOffset = document.minimum_reader_version
           ? builder.createString(document.minimum_reader_version)
           : 0;
+        const animationOffsets = Object.values(document.animations ?? {})
+          .sort((a, b) => a.id.localeCompare(b.id))
+          .map((clip) => {
+            const idOffset = builder.createString(clip.id);
+            const sceneOffset = builder.createString(clip.scene_id);
+            const targetOffset = clip.target_node_id
+              ? builder.createString(clip.target_node_id)
+              : 0;
+            const dependencyOffsets = clip.depends_on.map((id) =>
+              builder.createString(id)
+            );
+            const dependenciesOffset = fbs.AnimationClip.createDependsOnVector(
+              builder,
+              dependencyOffsets
+            );
+            const trackOffsets = clip.tracks.map((track) =>
+              fbs.AnimationTrack.createAnimationTrack(
+                builder,
+                enums.ANIMATION_PROPERTY_ENCODE.get(track.property) ??
+                  fbs.AnimationProperty.Opacity,
+                track.from,
+                track.to
+              )
+            );
+            const tracksOffset = fbs.AnimationClip.createTracksVector(
+              builder,
+              trackOffsets
+            );
+            const cueOffset = clip.cue_id
+              ? builder.createString(clip.cue_id)
+              : 0;
+            return fbs.AnimationClip.createAnimationClip(
+              builder,
+              idOffset,
+              sceneOffset,
+              targetOffset,
+              enums.ANIMATION_PHASE_ENCODE.get(clip.phase) ??
+                fbs.AnimationPhase.Enter,
+              enums.ANIMATION_TRIGGER_ENCODE.get(clip.trigger) ??
+                fbs.AnimationTrigger.SceneEnter,
+              dependenciesOffset,
+              clip.order,
+              clip.delay_seconds,
+              clip.duration_seconds,
+              enums.ANIMATION_EASING_ENCODE.get(clip.easing) ??
+                fbs.AnimationEasing.Linear,
+              enums.ANIMATION_FILL_ENCODE.get(clip.fill) ??
+                fbs.AnimationFill.Forwards,
+              clip.iterations,
+              tracksOffset,
+              enums.ANIMATION_MEDIA_ACTION_ENCODE.get(clip.media_action) ??
+                fbs.AnimationMediaAction.None,
+              clip.media_value,
+              cueOffset
+            );
+          });
+        const animationsOffset = animationOffsets.length
+          ? fbs.CanvasDocument.createAnimationsVector(builder, animationOffsets)
+          : 0;
 
         // Build CanvasDocument table
         fbs.CanvasDocument.startCanvasDocument(builder);
@@ -5470,6 +5614,9 @@ export namespace format {
             builder,
             minimumReaderVersionOffset
           );
+        }
+        if (animationsOffset) {
+          fbs.CanvasDocument.addAnimations(builder, animationsOffset);
         }
         const documentOffset = fbs.CanvasDocument.endCanvasDocument(builder);
 
@@ -7357,6 +7504,57 @@ export namespace format {
         }
         const minimumReaderVersion =
           document.minimumReaderVersion() ?? undefined;
+        const animations: grida.program.document.animation.Repository = {};
+        for (let i = 0; i < document.animationsLength(); i++) {
+          const encoded = document.animations(i);
+          const id = encoded?.id();
+          const sceneId = encoded?.sceneId();
+          if (!encoded || !id || !sceneId) continue;
+          const dependsOn = Array.from(
+            { length: encoded.dependsOnLength() },
+            (_, index) => encoded.dependsOn(index)
+          ).filter((value): value is string => typeof value === "string");
+          const tracks = Array.from(
+            { length: encoded.tracksLength() },
+            (_, index) => encoded.tracks(index)
+          ).flatMap((track) => {
+            if (!track) return [];
+            return [
+              {
+                property:
+                  enums.ANIMATION_PROPERTY_DECODE.get(track.property()) ??
+                  "opacity",
+                from: track.fromValue(),
+                to: track.toValue(),
+              },
+            ];
+          });
+          animations[id] = {
+            id,
+            scene_id: sceneId,
+            ...(encoded.targetNodeId()
+              ? { target_node_id: encoded.targetNodeId()! }
+              : {}),
+            phase: enums.ANIMATION_PHASE_DECODE.get(encoded.phase()) ?? "enter",
+            trigger:
+              enums.ANIMATION_TRIGGER_DECODE.get(encoded.trigger()) ??
+              "scene-enter",
+            depends_on: dependsOn,
+            order: encoded.order(),
+            delay_seconds: encoded.delaySeconds(),
+            duration_seconds: encoded.durationSeconds(),
+            easing:
+              enums.ANIMATION_EASING_DECODE.get(encoded.easing()) ?? "linear",
+            fill: enums.ANIMATION_FILL_DECODE.get(encoded.fill()) ?? "forwards",
+            iterations: encoded.iterations(),
+            tracks,
+            media_action:
+              enums.ANIMATION_MEDIA_ACTION_DECODE.get(encoded.mediaAction()) ??
+              "none",
+            media_value: encoded.mediaValue(),
+            ...(encoded.cueId() ? { cue_id: encoded.cueId()! } : {}),
+          };
+        }
 
         // Return minimal document structure (Document doesn't have schema_version, it's in the file wrapper)
         return {
@@ -7367,6 +7565,7 @@ export namespace format {
           images: {},
           bitmaps: {},
           external_assets: externalAssets,
+          animations,
           properties: {},
           ...(minimumReaderVersion
             ? { minimum_reader_version: minimumReaderVersion }

@@ -4109,6 +4109,590 @@ impl<'a> ::flatbuffers::Verifiable for ExternalAssetKind {
 }
 
 impl ::flatbuffers::SimpleToVerifyInSlice for ExternalAssetKind {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_ANIMATION_PHASE: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_ANIMATION_PHASE: u8 = 4;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_ANIMATION_PHASE: [AnimationPhase; 5] = [
+  AnimationPhase::Enter,
+  AnimationPhase::Emphasis,
+  AnimationPhase::Exit,
+  AnimationPhase::MediaAction,
+  AnimationPhase::SceneTransition,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct AnimationPhase(pub u8);
+#[allow(non_upper_case_globals)]
+impl AnimationPhase {
+  pub const Enter: Self = Self(0);
+  pub const Emphasis: Self = Self(1);
+  pub const Exit: Self = Self(2);
+  pub const MediaAction: Self = Self(3);
+  pub const SceneTransition: Self = Self(4);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 4;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::Enter,
+    Self::Emphasis,
+    Self::Exit,
+    Self::MediaAction,
+    Self::SceneTransition,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::Enter => Some("Enter"),
+      Self::Emphasis => Some("Emphasis"),
+      Self::Exit => Some("Exit"),
+      Self::MediaAction => Some("MediaAction"),
+      Self::SceneTransition => Some("SceneTransition"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for AnimationPhase {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for AnimationPhase {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for AnimationPhase {
+    type Output = AnimationPhase;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for AnimationPhase {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for AnimationPhase {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for AnimationPhase {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_ANIMATION_TRIGGER: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_ANIMATION_TRIGGER: u8 = 4;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_ANIMATION_TRIGGER: [AnimationTrigger; 5] = [
+  AnimationTrigger::SceneEnter,
+  AnimationTrigger::OperatorAdvance,
+  AnimationTrigger::WithPrevious,
+  AnimationTrigger::AfterPrevious,
+  AnimationTrigger::ExplicitCue,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct AnimationTrigger(pub u8);
+#[allow(non_upper_case_globals)]
+impl AnimationTrigger {
+  pub const SceneEnter: Self = Self(0);
+  pub const OperatorAdvance: Self = Self(1);
+  pub const WithPrevious: Self = Self(2);
+  pub const AfterPrevious: Self = Self(3);
+  pub const ExplicitCue: Self = Self(4);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 4;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::SceneEnter,
+    Self::OperatorAdvance,
+    Self::WithPrevious,
+    Self::AfterPrevious,
+    Self::ExplicitCue,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::SceneEnter => Some("SceneEnter"),
+      Self::OperatorAdvance => Some("OperatorAdvance"),
+      Self::WithPrevious => Some("WithPrevious"),
+      Self::AfterPrevious => Some("AfterPrevious"),
+      Self::ExplicitCue => Some("ExplicitCue"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for AnimationTrigger {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for AnimationTrigger {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for AnimationTrigger {
+    type Output = AnimationTrigger;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for AnimationTrigger {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for AnimationTrigger {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for AnimationTrigger {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_ANIMATION_EASING: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_ANIMATION_EASING: u8 = 5;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_ANIMATION_EASING: [AnimationEasing; 6] = [
+  AnimationEasing::Linear,
+  AnimationEasing::EaseIn,
+  AnimationEasing::EaseOut,
+  AnimationEasing::EaseInOut,
+  AnimationEasing::StepStart,
+  AnimationEasing::StepEnd,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct AnimationEasing(pub u8);
+#[allow(non_upper_case_globals)]
+impl AnimationEasing {
+  pub const Linear: Self = Self(0);
+  pub const EaseIn: Self = Self(1);
+  pub const EaseOut: Self = Self(2);
+  pub const EaseInOut: Self = Self(3);
+  pub const StepStart: Self = Self(4);
+  pub const StepEnd: Self = Self(5);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 5;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::Linear,
+    Self::EaseIn,
+    Self::EaseOut,
+    Self::EaseInOut,
+    Self::StepStart,
+    Self::StepEnd,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::Linear => Some("Linear"),
+      Self::EaseIn => Some("EaseIn"),
+      Self::EaseOut => Some("EaseOut"),
+      Self::EaseInOut => Some("EaseInOut"),
+      Self::StepStart => Some("StepStart"),
+      Self::StepEnd => Some("StepEnd"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for AnimationEasing {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for AnimationEasing {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for AnimationEasing {
+    type Output = AnimationEasing;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for AnimationEasing {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for AnimationEasing {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for AnimationEasing {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_ANIMATION_FILL: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_ANIMATION_FILL: u8 = 3;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_ANIMATION_FILL: [AnimationFill; 4] = [
+  AnimationFill::None,
+  AnimationFill::Forwards,
+  AnimationFill::Backwards,
+  AnimationFill::Both,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct AnimationFill(pub u8);
+#[allow(non_upper_case_globals)]
+impl AnimationFill {
+  pub const None: Self = Self(0);
+  pub const Forwards: Self = Self(1);
+  pub const Backwards: Self = Self(2);
+  pub const Both: Self = Self(3);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 3;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::None,
+    Self::Forwards,
+    Self::Backwards,
+    Self::Both,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::None => Some("None"),
+      Self::Forwards => Some("Forwards"),
+      Self::Backwards => Some("Backwards"),
+      Self::Both => Some("Both"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for AnimationFill {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for AnimationFill {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for AnimationFill {
+    type Output = AnimationFill;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for AnimationFill {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for AnimationFill {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for AnimationFill {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_ANIMATION_PROPERTY: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_ANIMATION_PROPERTY: u8 = 6;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_ANIMATION_PROPERTY: [AnimationProperty; 7] = [
+  AnimationProperty::Opacity,
+  AnimationProperty::TranslationX,
+  AnimationProperty::TranslationY,
+  AnimationProperty::Rotation,
+  AnimationProperty::ScaleX,
+  AnimationProperty::ScaleY,
+  AnimationProperty::Volume,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct AnimationProperty(pub u8);
+#[allow(non_upper_case_globals)]
+impl AnimationProperty {
+  pub const Opacity: Self = Self(0);
+  pub const TranslationX: Self = Self(1);
+  pub const TranslationY: Self = Self(2);
+  pub const Rotation: Self = Self(3);
+  pub const ScaleX: Self = Self(4);
+  pub const ScaleY: Self = Self(5);
+  pub const Volume: Self = Self(6);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 6;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::Opacity,
+    Self::TranslationX,
+    Self::TranslationY,
+    Self::Rotation,
+    Self::ScaleX,
+    Self::ScaleY,
+    Self::Volume,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::Opacity => Some("Opacity"),
+      Self::TranslationX => Some("TranslationX"),
+      Self::TranslationY => Some("TranslationY"),
+      Self::Rotation => Some("Rotation"),
+      Self::ScaleX => Some("ScaleX"),
+      Self::ScaleY => Some("ScaleY"),
+      Self::Volume => Some("Volume"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for AnimationProperty {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for AnimationProperty {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for AnimationProperty {
+    type Output = AnimationProperty;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for AnimationProperty {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for AnimationProperty {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for AnimationProperty {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_ANIMATION_MEDIA_ACTION: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_ANIMATION_MEDIA_ACTION: u8 = 4;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_ANIMATION_MEDIA_ACTION: [AnimationMediaAction; 5] = [
+  AnimationMediaAction::None,
+  AnimationMediaAction::Play,
+  AnimationMediaAction::Pause,
+  AnimationMediaAction::Seek,
+  AnimationMediaAction::SetLoop,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct AnimationMediaAction(pub u8);
+#[allow(non_upper_case_globals)]
+impl AnimationMediaAction {
+  pub const None: Self = Self(0);
+  pub const Play: Self = Self(1);
+  pub const Pause: Self = Self(2);
+  pub const Seek: Self = Self(3);
+  pub const SetLoop: Self = Self(4);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 4;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::None,
+    Self::Play,
+    Self::Pause,
+    Self::Seek,
+    Self::SetLoop,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::None => Some("None"),
+      Self::Play => Some("Play"),
+      Self::Pause => Some("Pause"),
+      Self::Seek => Some("Seek"),
+      Self::SetLoop => Some("SetLoop"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for AnimationMediaAction {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for AnimationMediaAction {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for AnimationMediaAction {
+    type Output = AnimationMediaAction;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for AnimationMediaAction {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for AnimationMediaAction {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for AnimationMediaAction {}
 /// Rust: `CGPoint { x: f32, y: f32 }`
 // struct CGPoint, aligned to 4
 #[repr(transparent)]
@@ -20708,6 +21292,492 @@ impl ::core::fmt::Debug for ExternalAsset<'_> {
       ds.finish()
   }
 }
+pub enum AnimationTrackOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+/// One typed scalar property track. Values are sampled deterministically by
+/// the logical-clock evaluator; browser animation events are never state.
+pub struct AnimationTrack<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for AnimationTrack<'a> {
+  type Inner = AnimationTrack<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> AnimationTrack<'a> {
+  pub const VT_PROPERTY: ::flatbuffers::VOffsetT = 4;
+  pub const VT_FROM_VALUE: ::flatbuffers::VOffsetT = 6;
+  pub const VT_TO_VALUE: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    AnimationTrack { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args AnimationTrackArgs
+  ) -> ::flatbuffers::WIPOffset<AnimationTrack<'bldr>> {
+    let mut builder = AnimationTrackBuilder::new(_fbb);
+    builder.add_to_value(args.to_value);
+    builder.add_from_value(args.from_value);
+    builder.add_property(args.property);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn property(&self) -> AnimationProperty {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<AnimationProperty>(AnimationTrack::VT_PROPERTY, Some(AnimationProperty::Opacity)).unwrap()}
+  }
+  #[inline]
+  pub fn from_value(&self) -> f64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(AnimationTrack::VT_FROM_VALUE, Some(0.0)).unwrap()}
+  }
+  #[inline]
+  pub fn to_value(&self) -> f64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(AnimationTrack::VT_TO_VALUE, Some(0.0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for AnimationTrack<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<AnimationProperty>("property", Self::VT_PROPERTY, false)?
+     .visit_field::<f64>("from_value", Self::VT_FROM_VALUE, false)?
+     .visit_field::<f64>("to_value", Self::VT_TO_VALUE, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct AnimationTrackArgs {
+    pub property: AnimationProperty,
+    pub from_value: f64,
+    pub to_value: f64,
+}
+impl<'a> Default for AnimationTrackArgs {
+  #[inline]
+  fn default() -> Self {
+    AnimationTrackArgs {
+      property: AnimationProperty::Opacity,
+      from_value: 0.0,
+      to_value: 0.0,
+    }
+  }
+}
+
+pub struct AnimationTrackBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> AnimationTrackBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_property(&mut self, property: AnimationProperty) {
+    self.fbb_.push_slot::<AnimationProperty>(AnimationTrack::VT_PROPERTY, property, AnimationProperty::Opacity);
+  }
+  #[inline]
+  pub fn add_from_value(&mut self, from_value: f64) {
+    self.fbb_.push_slot::<f64>(AnimationTrack::VT_FROM_VALUE, from_value, 0.0);
+  }
+  #[inline]
+  pub fn add_to_value(&mut self, to_value: f64) {
+    self.fbb_.push_slot::<f64>(AnimationTrack::VT_TO_VALUE, to_value, 0.0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> AnimationTrackBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    AnimationTrackBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<AnimationTrack<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for AnimationTrack<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("AnimationTrack");
+      ds.field("property", &self.property());
+      ds.field("from_value", &self.from_value());
+      ds.field("to_value", &self.to_value());
+      ds.finish()
+  }
+}
+pub enum AnimationClipOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+/// Generic native build/animation clip shared by authored and imported work.
+pub struct AnimationClip<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for AnimationClip<'a> {
+  type Inner = AnimationClip<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> AnimationClip<'a> {
+  pub const VT_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_SCENE_ID: ::flatbuffers::VOffsetT = 6;
+  pub const VT_TARGET_NODE_ID: ::flatbuffers::VOffsetT = 8;
+  pub const VT_PHASE: ::flatbuffers::VOffsetT = 10;
+  pub const VT_TRIGGER: ::flatbuffers::VOffsetT = 12;
+  pub const VT_DEPENDS_ON: ::flatbuffers::VOffsetT = 14;
+  pub const VT_ORDER: ::flatbuffers::VOffsetT = 16;
+  pub const VT_DELAY_SECONDS: ::flatbuffers::VOffsetT = 18;
+  pub const VT_DURATION_SECONDS: ::flatbuffers::VOffsetT = 20;
+  pub const VT_EASING: ::flatbuffers::VOffsetT = 22;
+  pub const VT_FILL: ::flatbuffers::VOffsetT = 24;
+  pub const VT_ITERATIONS: ::flatbuffers::VOffsetT = 26;
+  pub const VT_TRACKS: ::flatbuffers::VOffsetT = 28;
+  pub const VT_MEDIA_ACTION: ::flatbuffers::VOffsetT = 30;
+  pub const VT_MEDIA_VALUE: ::flatbuffers::VOffsetT = 32;
+  pub const VT_CUE_ID: ::flatbuffers::VOffsetT = 34;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    AnimationClip { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args AnimationClipArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<AnimationClip<'bldr>> {
+    let mut builder = AnimationClipBuilder::new(_fbb);
+    builder.add_media_value(args.media_value);
+    builder.add_duration_seconds(args.duration_seconds);
+    builder.add_delay_seconds(args.delay_seconds);
+    if let Some(x) = args.cue_id { builder.add_cue_id(x); }
+    if let Some(x) = args.tracks { builder.add_tracks(x); }
+    builder.add_iterations(args.iterations);
+    builder.add_order(args.order);
+    if let Some(x) = args.depends_on { builder.add_depends_on(x); }
+    if let Some(x) = args.target_node_id { builder.add_target_node_id(x); }
+    if let Some(x) = args.scene_id { builder.add_scene_id(x); }
+    if let Some(x) = args.id { builder.add_id(x); }
+    builder.add_media_action(args.media_action);
+    builder.add_fill(args.fill);
+    builder.add_easing(args.easing);
+    builder.add_trigger(args.trigger);
+    builder.add_phase(args.phase);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn id(&self) -> &'a str {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AnimationClip::VT_ID, None).unwrap()}
+  }
+  #[inline]
+  pub fn scene_id(&self) -> &'a str {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AnimationClip::VT_SCENE_ID, None).unwrap()}
+  }
+  #[inline]
+  pub fn target_node_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AnimationClip::VT_TARGET_NODE_ID, None)}
+  }
+  #[inline]
+  pub fn phase(&self) -> AnimationPhase {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<AnimationPhase>(AnimationClip::VT_PHASE, Some(AnimationPhase::Enter)).unwrap()}
+  }
+  #[inline]
+  pub fn trigger(&self) -> AnimationTrigger {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<AnimationTrigger>(AnimationClip::VT_TRIGGER, Some(AnimationTrigger::SceneEnter)).unwrap()}
+  }
+  #[inline]
+  pub fn depends_on(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>(AnimationClip::VT_DEPENDS_ON, None)}
+  }
+  #[inline]
+  pub fn order(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(AnimationClip::VT_ORDER, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn delay_seconds(&self) -> f64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(AnimationClip::VT_DELAY_SECONDS, Some(0.0)).unwrap()}
+  }
+  #[inline]
+  pub fn duration_seconds(&self) -> f64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(AnimationClip::VT_DURATION_SECONDS, Some(0.0)).unwrap()}
+  }
+  #[inline]
+  pub fn easing(&self) -> AnimationEasing {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<AnimationEasing>(AnimationClip::VT_EASING, Some(AnimationEasing::Linear)).unwrap()}
+  }
+  #[inline]
+  pub fn fill(&self) -> AnimationFill {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<AnimationFill>(AnimationClip::VT_FILL, Some(AnimationFill::Forwards)).unwrap()}
+  }
+  #[inline]
+  pub fn iterations(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(AnimationClip::VT_ITERATIONS, Some(1)).unwrap()}
+  }
+  #[inline]
+  pub fn tracks(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<AnimationTrack<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<AnimationTrack>>>>(AnimationClip::VT_TRACKS, None)}
+  }
+  #[inline]
+  pub fn media_action(&self) -> AnimationMediaAction {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<AnimationMediaAction>(AnimationClip::VT_MEDIA_ACTION, Some(AnimationMediaAction::None)).unwrap()}
+  }
+  #[inline]
+  pub fn media_value(&self) -> f64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(AnimationClip::VT_MEDIA_VALUE, Some(0.0)).unwrap()}
+  }
+  #[inline]
+  pub fn cue_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AnimationClip::VT_CUE_ID, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for AnimationClip<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("id", Self::VT_ID, true)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("scene_id", Self::VT_SCENE_ID, true)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("target_node_id", Self::VT_TARGET_NODE_ID, false)?
+     .visit_field::<AnimationPhase>("phase", Self::VT_PHASE, false)?
+     .visit_field::<AnimationTrigger>("trigger", Self::VT_TRIGGER, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("depends_on", Self::VT_DEPENDS_ON, false)?
+     .visit_field::<u32>("order", Self::VT_ORDER, false)?
+     .visit_field::<f64>("delay_seconds", Self::VT_DELAY_SECONDS, false)?
+     .visit_field::<f64>("duration_seconds", Self::VT_DURATION_SECONDS, false)?
+     .visit_field::<AnimationEasing>("easing", Self::VT_EASING, false)?
+     .visit_field::<AnimationFill>("fill", Self::VT_FILL, false)?
+     .visit_field::<u32>("iterations", Self::VT_ITERATIONS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<AnimationTrack>>>>("tracks", Self::VT_TRACKS, false)?
+     .visit_field::<AnimationMediaAction>("media_action", Self::VT_MEDIA_ACTION, false)?
+     .visit_field::<f64>("media_value", Self::VT_MEDIA_VALUE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("cue_id", Self::VT_CUE_ID, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct AnimationClipArgs<'a> {
+    pub id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub scene_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub target_node_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub phase: AnimationPhase,
+    pub trigger: AnimationTrigger,
+    pub depends_on: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
+    pub order: u32,
+    pub delay_seconds: f64,
+    pub duration_seconds: f64,
+    pub easing: AnimationEasing,
+    pub fill: AnimationFill,
+    pub iterations: u32,
+    pub tracks: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<AnimationTrack<'a>>>>>,
+    pub media_action: AnimationMediaAction,
+    pub media_value: f64,
+    pub cue_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for AnimationClipArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    AnimationClipArgs {
+      id: None, // required field
+      scene_id: None, // required field
+      target_node_id: None,
+      phase: AnimationPhase::Enter,
+      trigger: AnimationTrigger::SceneEnter,
+      depends_on: None,
+      order: 0,
+      delay_seconds: 0.0,
+      duration_seconds: 0.0,
+      easing: AnimationEasing::Linear,
+      fill: AnimationFill::Forwards,
+      iterations: 1,
+      tracks: None,
+      media_action: AnimationMediaAction::None,
+      media_value: 0.0,
+      cue_id: None,
+    }
+  }
+}
+
+pub struct AnimationClipBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> AnimationClipBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_id(&mut self, id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AnimationClip::VT_ID, id);
+  }
+  #[inline]
+  pub fn add_scene_id(&mut self, scene_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AnimationClip::VT_SCENE_ID, scene_id);
+  }
+  #[inline]
+  pub fn add_target_node_id(&mut self, target_node_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AnimationClip::VT_TARGET_NODE_ID, target_node_id);
+  }
+  #[inline]
+  pub fn add_phase(&mut self, phase: AnimationPhase) {
+    self.fbb_.push_slot::<AnimationPhase>(AnimationClip::VT_PHASE, phase, AnimationPhase::Enter);
+  }
+  #[inline]
+  pub fn add_trigger(&mut self, trigger: AnimationTrigger) {
+    self.fbb_.push_slot::<AnimationTrigger>(AnimationClip::VT_TRIGGER, trigger, AnimationTrigger::SceneEnter);
+  }
+  #[inline]
+  pub fn add_depends_on(&mut self, depends_on: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<&'b  str>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AnimationClip::VT_DEPENDS_ON, depends_on);
+  }
+  #[inline]
+  pub fn add_order(&mut self, order: u32) {
+    self.fbb_.push_slot::<u32>(AnimationClip::VT_ORDER, order, 0);
+  }
+  #[inline]
+  pub fn add_delay_seconds(&mut self, delay_seconds: f64) {
+    self.fbb_.push_slot::<f64>(AnimationClip::VT_DELAY_SECONDS, delay_seconds, 0.0);
+  }
+  #[inline]
+  pub fn add_duration_seconds(&mut self, duration_seconds: f64) {
+    self.fbb_.push_slot::<f64>(AnimationClip::VT_DURATION_SECONDS, duration_seconds, 0.0);
+  }
+  #[inline]
+  pub fn add_easing(&mut self, easing: AnimationEasing) {
+    self.fbb_.push_slot::<AnimationEasing>(AnimationClip::VT_EASING, easing, AnimationEasing::Linear);
+  }
+  #[inline]
+  pub fn add_fill(&mut self, fill: AnimationFill) {
+    self.fbb_.push_slot::<AnimationFill>(AnimationClip::VT_FILL, fill, AnimationFill::Forwards);
+  }
+  #[inline]
+  pub fn add_iterations(&mut self, iterations: u32) {
+    self.fbb_.push_slot::<u32>(AnimationClip::VT_ITERATIONS, iterations, 1);
+  }
+  #[inline]
+  pub fn add_tracks(&mut self, tracks: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<AnimationTrack<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AnimationClip::VT_TRACKS, tracks);
+  }
+  #[inline]
+  pub fn add_media_action(&mut self, media_action: AnimationMediaAction) {
+    self.fbb_.push_slot::<AnimationMediaAction>(AnimationClip::VT_MEDIA_ACTION, media_action, AnimationMediaAction::None);
+  }
+  #[inline]
+  pub fn add_media_value(&mut self, media_value: f64) {
+    self.fbb_.push_slot::<f64>(AnimationClip::VT_MEDIA_VALUE, media_value, 0.0);
+  }
+  #[inline]
+  pub fn add_cue_id(&mut self, cue_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AnimationClip::VT_CUE_ID, cue_id);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> AnimationClipBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    AnimationClipBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<AnimationClip<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    self.fbb_.required(o, AnimationClip::VT_ID,"id");
+    self.fbb_.required(o, AnimationClip::VT_SCENE_ID,"scene_id");
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for AnimationClip<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("AnimationClip");
+      ds.field("id", &self.id());
+      ds.field("scene_id", &self.scene_id());
+      ds.field("target_node_id", &self.target_node_id());
+      ds.field("phase", &self.phase());
+      ds.field("trigger", &self.trigger());
+      ds.field("depends_on", &self.depends_on());
+      ds.field("order", &self.order());
+      ds.field("delay_seconds", &self.delay_seconds());
+      ds.field("duration_seconds", &self.duration_seconds());
+      ds.field("easing", &self.easing());
+      ds.field("fill", &self.fill());
+      ds.field("iterations", &self.iterations());
+      ds.field("tracks", &self.tracks());
+      ds.field("media_action", &self.media_action());
+      ds.field("media_value", &self.media_value());
+      ds.field("cue_id", &self.cue_id());
+      ds.finish()
+  }
+}
 pub enum CanvasDocumentOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -20729,6 +21799,7 @@ impl<'a> CanvasDocument<'a> {
   pub const VT_SCENES: ::flatbuffers::VOffsetT = 8;
   pub const VT_EXTERNAL_ASSETS: ::flatbuffers::VOffsetT = 10;
   pub const VT_MINIMUM_READER_VERSION: ::flatbuffers::VOffsetT = 12;
+  pub const VT_ANIMATIONS: ::flatbuffers::VOffsetT = 14;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -20740,6 +21811,7 @@ impl<'a> CanvasDocument<'a> {
     args: &'args CanvasDocumentArgs<'args>
   ) -> ::flatbuffers::WIPOffset<CanvasDocument<'bldr>> {
     let mut builder = CanvasDocumentBuilder::new(_fbb);
+    if let Some(x) = args.animations { builder.add_animations(x); }
     if let Some(x) = args.minimum_reader_version { builder.add_minimum_reader_version(x); }
     if let Some(x) = args.external_assets { builder.add_external_assets(x); }
     if let Some(x) = args.scenes { builder.add_scenes(x); }
@@ -20795,6 +21867,14 @@ impl<'a> CanvasDocument<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(CanvasDocument::VT_MINIMUM_READER_VERSION, None)}
   }
+  /// Versioned native animation/build repository, sorted by clip id.
+  #[inline]
+  pub fn animations(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<AnimationClip<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<AnimationClip>>>>(CanvasDocument::VT_ANIMATIONS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for CanvasDocument<'_> {
@@ -20808,6 +21888,7 @@ impl ::flatbuffers::Verifiable for CanvasDocument<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<NodeIdentifier>>>>("scenes", Self::VT_SCENES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ExternalAsset>>>>("external_assets", Self::VT_EXTERNAL_ASSETS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("minimum_reader_version", Self::VT_MINIMUM_READER_VERSION, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<AnimationClip>>>>("animations", Self::VT_ANIMATIONS, false)?
      .finish();
     Ok(())
   }
@@ -20818,6 +21899,7 @@ pub struct CanvasDocumentArgs<'a> {
     pub scenes: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<NodeIdentifier<'a>>>>>,
     pub external_assets: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ExternalAsset<'a>>>>>,
     pub minimum_reader_version: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub animations: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<AnimationClip<'a>>>>>,
 }
 impl<'a> Default for CanvasDocumentArgs<'a> {
   #[inline]
@@ -20828,6 +21910,7 @@ impl<'a> Default for CanvasDocumentArgs<'a> {
       scenes: None,
       external_assets: None,
       minimum_reader_version: None,
+      animations: None,
     }
   }
 }
@@ -20858,6 +21941,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> CanvasDocumentBuilder<'a, 'b,
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(CanvasDocument::VT_MINIMUM_READER_VERSION, minimum_reader_version);
   }
   #[inline]
+  pub fn add_animations(&mut self, animations: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<AnimationClip<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(CanvasDocument::VT_ANIMATIONS, animations);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> CanvasDocumentBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     CanvasDocumentBuilder {
@@ -20880,6 +21967,7 @@ impl ::core::fmt::Debug for CanvasDocument<'_> {
       ds.field("scenes", &self.scenes());
       ds.field("external_assets", &self.external_assets());
       ds.field("minimum_reader_version", &self.minimum_reader_version());
+      ds.field("animations", &self.animations());
       ds.finish()
   }
 }

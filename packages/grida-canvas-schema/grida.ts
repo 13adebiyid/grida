@@ -537,7 +537,66 @@ export namespace grida {
 
 // oxlint-disable-next-line eslint(no-unused-vars)
 export namespace grida.program.document {
-  export const SCHEMA_VERSION = "0.91.2-beta+20260714";
+  export const SCHEMA_VERSION = "0.91.3-beta+20260714";
+
+  export namespace animation {
+    export type Phase =
+      | "enter"
+      | "emphasis"
+      | "exit"
+      | "media-action"
+      | "scene-transition";
+    export type Trigger =
+      | "scene-enter"
+      | "operator-advance"
+      | "with-previous"
+      | "after-previous"
+      | "explicit-cue";
+    export type Easing =
+      | "linear"
+      | "ease-in"
+      | "ease-out"
+      | "ease-in-out"
+      | "step-start"
+      | "step-end";
+    export type Fill = "none" | "forwards" | "backwards" | "both";
+    export type Property =
+      | "opacity"
+      | "translation-x"
+      | "translation-y"
+      | "rotation"
+      | "scale-x"
+      | "scale-y"
+      | "volume";
+    export type MediaAction = "none" | "play" | "pause" | "seek" | "set-loop";
+
+    export interface Track {
+      property: Property;
+      from: number;
+      to: number;
+    }
+
+    export interface Clip {
+      id: string;
+      scene_id: string;
+      target_node_id?: string;
+      phase: Phase;
+      trigger: Trigger;
+      depends_on: string[];
+      order: number;
+      delay_seconds: number;
+      duration_seconds: number;
+      easing: Easing;
+      fill: Fill;
+      iterations: number;
+      tracks: Track[];
+      media_action: MediaAction;
+      media_value: number;
+      cue_id?: string;
+    }
+
+    export type Repository = Record<string, Clip>;
+  }
 
   /**
    * Schema version compatibility check.
@@ -941,6 +1000,8 @@ export namespace grida.program.document {
     entry_scene_id?: string;
     /** Minimum schema reader required to preserve this document on write. */
     minimum_reader_version?: string;
+    /** Generic native animation/build repository keyed by stable clip id. */
+    animations?: animation.Repository;
   }
 
   /**

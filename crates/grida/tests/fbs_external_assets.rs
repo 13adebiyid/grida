@@ -35,6 +35,7 @@ fn decodes_external_asset_repository_and_reader_floor() {
             scenes: None,
             external_assets: Some(assets),
             minimum_reader_version: Some(minimum),
+            animations: None,
         },
     );
     let root = fbs::GridaFile::create(
