@@ -242,7 +242,26 @@ export function evaluateAnimations(
 
   for (const clip of orderedClips) {
     const rootClock = clockForClip(clip, clock);
-    if (rootClock === null) continue;
+    if (rootClock === null) {
+      // Enter builds that have not been advanced to yet must render their
+      // authored pre-build state. Otherwise a late-joining live window paints
+      // the node at its base value (usually fully visible) and the first build
+      // appears to do nothing. Do not overwrite a value already established
+      // by an earlier completed clip on the same property.
+      if (
+        clip.phase === "enter" &&
+        clip.target_node_id &&
+        (clip.fill === "backwards" || clip.fill === "both")
+      ) {
+        const target = (values[clip.target_node_id] ??= {});
+        for (const track of clip.tracks) {
+          if (target[track.property] === undefined) {
+            target[track.property] = track.from;
+          }
+        }
+      }
+      continue;
+    }
     const dependencyOffset = clip.depends_on.reduce((latest, dependency) => {
       const dependencyClip = byId.get(dependency);
       const prior = completion.get(dependency) ?? 0;

@@ -61,7 +61,12 @@ describe("native animation evaluator", () => {
   it("returns completed state after refresh and skips future builds", () => {
     const animations = {
       enter: clip(),
-      later: clip({ id: "later", order: 2 }),
+      later: clip({
+        id: "later",
+        target_node_id: "node-2",
+        order: 2,
+        fill: "both",
+      }),
     };
     const sample = evaluateAnimations(animations, {
       sceneId: "scene",
@@ -72,7 +77,7 @@ describe("native animation evaluator", () => {
       nowMs: 10_000,
     });
     expect(sample.values.node.opacity).toBe(1);
-    expect(Object.keys(sample.values)).toEqual(["node"]);
+    expect(sample.values["node-2"].opacity).toBe(0);
   });
 
   it("evaluates dependency order independently of repository key order", () => {
