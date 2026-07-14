@@ -3868,10 +3868,10 @@ pub struct LayoutPositioningBasisUnionTableOffset {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_NODE: u8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_NODE: u8 = 14;
+pub const ENUM_MAX_NODE: u8 = 15;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_NODE: [Node; 15] = [
+pub const ENUM_VALUES_NODE: [Node; 16] = [
   Node::NONE,
   Node::UnknownNode,
   Node::SceneNode,
@@ -3887,6 +3887,7 @@ pub const ENUM_VALUES_NODE: [Node; 15] = [
   Node::AttributedTextNode,
   Node::TrayNode,
   Node::MarkdownEmbedNode,
+  Node::VideoNode,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -3909,9 +3910,10 @@ impl Node {
   pub const AttributedTextNode: Self = Self(12);
   pub const TrayNode: Self = Self(13);
   pub const MarkdownEmbedNode: Self = Self(14);
+  pub const VideoNode: Self = Self(15);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 14;
+  pub const ENUM_MAX: u8 = 15;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::NONE,
     Self::UnknownNode,
@@ -3928,6 +3930,7 @@ impl Node {
     Self::AttributedTextNode,
     Self::TrayNode,
     Self::MarkdownEmbedNode,
+    Self::VideoNode,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -3947,6 +3950,7 @@ impl Node {
       Self::AttributedTextNode => Some("AttributedTextNode"),
       Self::TrayNode => Some("TrayNode"),
       Self::MarkdownEmbedNode => Some("MarkdownEmbedNode"),
+      Self::VideoNode => Some("VideoNode"),
       _ => None,
     }
   }
@@ -19580,6 +19584,424 @@ impl ::core::fmt::Debug for MarkdownEmbedNode<'_> {
       ds.finish()
   }
 }
+pub enum VideoNodePropertiesOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+/// Native video layer. Imported and authored video share this representation.
+/// Content-addressed documents use `source_asset_digest`; `source_uri` exists
+/// for ordinary URL-authored documents and must never contain a host file path.
+pub struct VideoNodeProperties<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for VideoNodeProperties<'a> {
+  type Inner = VideoNodeProperties<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> VideoNodeProperties<'a> {
+  pub const VT_SOURCE_ASSET_DIGEST: ::flatbuffers::VOffsetT = 4;
+  pub const VT_SOURCE_URI: ::flatbuffers::VOffsetT = 6;
+  pub const VT_POSTER_ASSET_DIGEST: ::flatbuffers::VOffsetT = 8;
+  pub const VT_POSTER_URI: ::flatbuffers::VOffsetT = 10;
+  pub const VT_FIT: ::flatbuffers::VOffsetT = 12;
+  pub const VT_TRIM_START_SECONDS: ::flatbuffers::VOffsetT = 14;
+  pub const VT_TRIM_END_SECONDS: ::flatbuffers::VOffsetT = 16;
+  pub const VT_LOOP_: ::flatbuffers::VOffsetT = 18;
+  pub const VT_MUTED: ::flatbuffers::VOffsetT = 20;
+  pub const VT_VOLUME: ::flatbuffers::VOffsetT = 22;
+  pub const VT_AUTOPLAY: ::flatbuffers::VOffsetT = 24;
+  pub const VT_CORNER_RADIUS: ::flatbuffers::VOffsetT = 26;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    VideoNodeProperties { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args VideoNodePropertiesArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<VideoNodeProperties<'bldr>> {
+    let mut builder = VideoNodePropertiesBuilder::new(_fbb);
+    builder.add_trim_end_seconds(args.trim_end_seconds);
+    builder.add_trim_start_seconds(args.trim_start_seconds);
+    if let Some(x) = args.corner_radius { builder.add_corner_radius(x); }
+    builder.add_volume(args.volume);
+    if let Some(x) = args.poster_uri { builder.add_poster_uri(x); }
+    if let Some(x) = args.poster_asset_digest { builder.add_poster_asset_digest(x); }
+    if let Some(x) = args.source_uri { builder.add_source_uri(x); }
+    if let Some(x) = args.source_asset_digest { builder.add_source_asset_digest(x); }
+    builder.add_autoplay(args.autoplay);
+    builder.add_muted(args.muted);
+    builder.add_loop_(args.loop_);
+    builder.add_fit(args.fit);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn source_asset_digest(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(VideoNodeProperties::VT_SOURCE_ASSET_DIGEST, None)}
+  }
+  #[inline]
+  pub fn source_uri(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(VideoNodeProperties::VT_SOURCE_URI, None)}
+  }
+  #[inline]
+  pub fn poster_asset_digest(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(VideoNodeProperties::VT_POSTER_ASSET_DIGEST, None)}
+  }
+  #[inline]
+  pub fn poster_uri(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(VideoNodeProperties::VT_POSTER_URI, None)}
+  }
+  #[inline]
+  pub fn fit(&self) -> BoxFit {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<BoxFit>(VideoNodeProperties::VT_FIT, Some(BoxFit::Cover)).unwrap()}
+  }
+  #[inline]
+  pub fn trim_start_seconds(&self) -> f64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(VideoNodeProperties::VT_TRIM_START_SECONDS, Some(0.0)).unwrap()}
+  }
+  #[inline]
+  pub fn trim_end_seconds(&self) -> f64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(VideoNodeProperties::VT_TRIM_END_SECONDS, Some(-1.0)).unwrap()}
+  }
+  #[inline]
+  pub fn loop_(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(VideoNodeProperties::VT_LOOP_, Some(true)).unwrap()}
+  }
+  #[inline]
+  pub fn muted(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(VideoNodeProperties::VT_MUTED, Some(true)).unwrap()}
+  }
+  #[inline]
+  pub fn volume(&self) -> f32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f32>(VideoNodeProperties::VT_VOLUME, Some(0.0)).unwrap()}
+  }
+  #[inline]
+  pub fn autoplay(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(VideoNodeProperties::VT_AUTOPLAY, Some(true)).unwrap()}
+  }
+  #[inline]
+  pub fn corner_radius(&self) -> Option<RectangularCornerRadiusTrait<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<RectangularCornerRadiusTrait>>(VideoNodeProperties::VT_CORNER_RADIUS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for VideoNodeProperties<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("source_asset_digest", Self::VT_SOURCE_ASSET_DIGEST, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("source_uri", Self::VT_SOURCE_URI, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("poster_asset_digest", Self::VT_POSTER_ASSET_DIGEST, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("poster_uri", Self::VT_POSTER_URI, false)?
+     .visit_field::<BoxFit>("fit", Self::VT_FIT, false)?
+     .visit_field::<f64>("trim_start_seconds", Self::VT_TRIM_START_SECONDS, false)?
+     .visit_field::<f64>("trim_end_seconds", Self::VT_TRIM_END_SECONDS, false)?
+     .visit_field::<bool>("loop_", Self::VT_LOOP_, false)?
+     .visit_field::<bool>("muted", Self::VT_MUTED, false)?
+     .visit_field::<f32>("volume", Self::VT_VOLUME, false)?
+     .visit_field::<bool>("autoplay", Self::VT_AUTOPLAY, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<RectangularCornerRadiusTrait>>("corner_radius", Self::VT_CORNER_RADIUS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct VideoNodePropertiesArgs<'a> {
+    pub source_asset_digest: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub source_uri: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub poster_asset_digest: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub poster_uri: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub fit: BoxFit,
+    pub trim_start_seconds: f64,
+    pub trim_end_seconds: f64,
+    pub loop_: bool,
+    pub muted: bool,
+    pub volume: f32,
+    pub autoplay: bool,
+    pub corner_radius: Option<::flatbuffers::WIPOffset<RectangularCornerRadiusTrait<'a>>>,
+}
+impl<'a> Default for VideoNodePropertiesArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    VideoNodePropertiesArgs {
+      source_asset_digest: None,
+      source_uri: None,
+      poster_asset_digest: None,
+      poster_uri: None,
+      fit: BoxFit::Cover,
+      trim_start_seconds: 0.0,
+      trim_end_seconds: -1.0,
+      loop_: true,
+      muted: true,
+      volume: 0.0,
+      autoplay: true,
+      corner_radius: None,
+    }
+  }
+}
+
+pub struct VideoNodePropertiesBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> VideoNodePropertiesBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_source_asset_digest(&mut self, source_asset_digest: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(VideoNodeProperties::VT_SOURCE_ASSET_DIGEST, source_asset_digest);
+  }
+  #[inline]
+  pub fn add_source_uri(&mut self, source_uri: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(VideoNodeProperties::VT_SOURCE_URI, source_uri);
+  }
+  #[inline]
+  pub fn add_poster_asset_digest(&mut self, poster_asset_digest: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(VideoNodeProperties::VT_POSTER_ASSET_DIGEST, poster_asset_digest);
+  }
+  #[inline]
+  pub fn add_poster_uri(&mut self, poster_uri: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(VideoNodeProperties::VT_POSTER_URI, poster_uri);
+  }
+  #[inline]
+  pub fn add_fit(&mut self, fit: BoxFit) {
+    self.fbb_.push_slot::<BoxFit>(VideoNodeProperties::VT_FIT, fit, BoxFit::Cover);
+  }
+  #[inline]
+  pub fn add_trim_start_seconds(&mut self, trim_start_seconds: f64) {
+    self.fbb_.push_slot::<f64>(VideoNodeProperties::VT_TRIM_START_SECONDS, trim_start_seconds, 0.0);
+  }
+  #[inline]
+  pub fn add_trim_end_seconds(&mut self, trim_end_seconds: f64) {
+    self.fbb_.push_slot::<f64>(VideoNodeProperties::VT_TRIM_END_SECONDS, trim_end_seconds, -1.0);
+  }
+  #[inline]
+  pub fn add_loop_(&mut self, loop_: bool) {
+    self.fbb_.push_slot::<bool>(VideoNodeProperties::VT_LOOP_, loop_, true);
+  }
+  #[inline]
+  pub fn add_muted(&mut self, muted: bool) {
+    self.fbb_.push_slot::<bool>(VideoNodeProperties::VT_MUTED, muted, true);
+  }
+  #[inline]
+  pub fn add_volume(&mut self, volume: f32) {
+    self.fbb_.push_slot::<f32>(VideoNodeProperties::VT_VOLUME, volume, 0.0);
+  }
+  #[inline]
+  pub fn add_autoplay(&mut self, autoplay: bool) {
+    self.fbb_.push_slot::<bool>(VideoNodeProperties::VT_AUTOPLAY, autoplay, true);
+  }
+  #[inline]
+  pub fn add_corner_radius(&mut self, corner_radius: ::flatbuffers::WIPOffset<RectangularCornerRadiusTrait<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<RectangularCornerRadiusTrait>>(VideoNodeProperties::VT_CORNER_RADIUS, corner_radius);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> VideoNodePropertiesBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    VideoNodePropertiesBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<VideoNodeProperties<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for VideoNodeProperties<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("VideoNodeProperties");
+      ds.field("source_asset_digest", &self.source_asset_digest());
+      ds.field("source_uri", &self.source_uri());
+      ds.field("poster_asset_digest", &self.poster_asset_digest());
+      ds.field("poster_uri", &self.poster_uri());
+      ds.field("fit", &self.fit());
+      ds.field("trim_start_seconds", &self.trim_start_seconds());
+      ds.field("trim_end_seconds", &self.trim_end_seconds());
+      ds.field("loop_", &self.loop_());
+      ds.field("muted", &self.muted());
+      ds.field("volume", &self.volume());
+      ds.field("autoplay", &self.autoplay());
+      ds.field("corner_radius", &self.corner_radius());
+      ds.finish()
+  }
+}
+pub enum VideoNodeOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct VideoNode<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for VideoNode<'a> {
+  type Inner = VideoNode<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> VideoNode<'a> {
+  pub const VT_NODE: ::flatbuffers::VOffsetT = 4;
+  pub const VT_LAYER: ::flatbuffers::VOffsetT = 6;
+  pub const VT_PROPERTIES: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    VideoNode { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args VideoNodeArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<VideoNode<'bldr>> {
+    let mut builder = VideoNodeBuilder::new(_fbb);
+    if let Some(x) = args.properties { builder.add_properties(x); }
+    if let Some(x) = args.layer { builder.add_layer(x); }
+    if let Some(x) = args.node { builder.add_node(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn node(&self) -> SystemNodeTrait<'a> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<SystemNodeTrait>>(VideoNode::VT_NODE, None).unwrap()}
+  }
+  #[inline]
+  pub fn layer(&self) -> LayerTrait<'a> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<LayerTrait>>(VideoNode::VT_LAYER, None).unwrap()}
+  }
+  #[inline]
+  pub fn properties(&self) -> Option<VideoNodeProperties<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<VideoNodeProperties>>(VideoNode::VT_PROPERTIES, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for VideoNode<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<SystemNodeTrait>>("node", Self::VT_NODE, true)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<LayerTrait>>("layer", Self::VT_LAYER, true)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<VideoNodeProperties>>("properties", Self::VT_PROPERTIES, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct VideoNodeArgs<'a> {
+    pub node: Option<::flatbuffers::WIPOffset<SystemNodeTrait<'a>>>,
+    pub layer: Option<::flatbuffers::WIPOffset<LayerTrait<'a>>>,
+    pub properties: Option<::flatbuffers::WIPOffset<VideoNodeProperties<'a>>>,
+}
+impl<'a> Default for VideoNodeArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    VideoNodeArgs {
+      node: None, // required field
+      layer: None, // required field
+      properties: None,
+    }
+  }
+}
+
+pub struct VideoNodeBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> VideoNodeBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_node(&mut self, node: ::flatbuffers::WIPOffset<SystemNodeTrait<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<SystemNodeTrait>>(VideoNode::VT_NODE, node);
+  }
+  #[inline]
+  pub fn add_layer(&mut self, layer: ::flatbuffers::WIPOffset<LayerTrait<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<LayerTrait>>(VideoNode::VT_LAYER, layer);
+  }
+  #[inline]
+  pub fn add_properties(&mut self, properties: ::flatbuffers::WIPOffset<VideoNodeProperties<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<VideoNodeProperties>>(VideoNode::VT_PROPERTIES, properties);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> VideoNodeBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    VideoNodeBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<VideoNode<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    self.fbb_.required(o, VideoNode::VT_NODE,"node");
+    self.fbb_.required(o, VideoNode::VT_LAYER,"layer");
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for VideoNode<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("VideoNode");
+      ds.field("node", &self.node());
+      ds.field("layer", &self.layer());
+      ds.field("properties", &self.properties());
+      ds.finish()
+  }
+}
 pub enum NodeSlotOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -19845,6 +20267,21 @@ impl<'a> NodeSlot<'a> {
     }
   }
 
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn node_as_video_node(&self) -> Option<VideoNode<'a>> {
+    if self.node_type() == Node::VideoNode {
+      self.node().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { VideoNode::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
 }
 
 impl ::flatbuffers::Verifiable for NodeSlot<'_> {
@@ -19869,6 +20306,7 @@ impl ::flatbuffers::Verifiable for NodeSlot<'_> {
           Node::AttributedTextNode => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<AttributedTextNode>>("Node::AttributedTextNode", pos),
           Node::TrayNode => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<TrayNode>>("Node::TrayNode", pos),
           Node::MarkdownEmbedNode => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<MarkdownEmbedNode>>("Node::MarkdownEmbedNode", pos),
+          Node::VideoNode => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<VideoNode>>("Node::VideoNode", pos),
           _ => Ok(()),
         }
      })?
@@ -20016,6 +20454,13 @@ impl ::core::fmt::Debug for NodeSlot<'_> {
         },
         Node::MarkdownEmbedNode => {
           if let Some(x) = self.node_as_markdown_embed_node() {
+            ds.field("node", &x)
+          } else {
+            ds.field("node", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        Node::VideoNode => {
+          if let Some(x) = self.node_as_video_node() {
             ds.field("node", &x)
           } else {
             ds.field("node", &"InvalidFlatbuffer: Union discriminant does not match value.")

@@ -66,6 +66,7 @@ pub fn motion_of(node: &Node) -> Motion<'_> {
         Node::Path(n) => Motion::Affine(n.transform),
         Node::Polygon(n) => Motion::Affine(n.transform),
         Node::Image(n) => Motion::Affine(n.transform),
+        Node::Video(n) => Motion::Affine(n.transform),
         Node::Error(n) => Motion::Affine(n.transform),
         Node::Vector(n) => Motion::Affine(n.transform),
         Node::MarkdownEmbed(n) => Motion::Affine(n.transform),
@@ -209,6 +210,12 @@ pub fn paint_of(node: &Node) -> PaintLens<'_> {
             blend_mode: n.blend_mode,
             fills: None,
             strokes: Some(&n.strokes),
+        },
+        Node::Video(n) => PaintLens {
+            opacity: n.opacity,
+            blend_mode: n.blend_mode,
+            fills: None,
+            strokes: None,
         },
         // Text paint lives inside `text_style` / `attributed_string`,
         // and changing those also changes layout. Treat the whole

@@ -1127,6 +1127,70 @@ describe("format roundtrip", () => {
     });
   });
 
+  describe("VideoNode", () => {
+    it("roundtrips content-addressed playback and trim controls", () => {
+      const sceneId = "0-1";
+      const nodeId = "0-2";
+      const digest = "a".repeat(64);
+      const poster = "b".repeat(64);
+      const doc = createDocument(sceneId, {
+        [nodeId]: {
+          type: "video",
+          id: nodeId,
+          name: "Loop",
+          active: true,
+          locked: false,
+          opacity: 0.8,
+          z_index: 0,
+          layout_positioning: "absolute",
+          layout_inset_left: 20,
+          layout_inset_top: 30,
+          layout_target_width: 640,
+          layout_target_height: 360,
+          rotation: 5,
+          corner_radius: 12,
+          fit: "contain",
+          src: `res://videos/${digest}`,
+          asset_digest: digest,
+          poster: `res://images/${poster}`,
+          poster_asset_digest: poster,
+          loop: true,
+          muted: false,
+          volume: 0.75,
+          autoplay: true,
+          trim_start_seconds: 1.25,
+          trim_end_seconds: 9.5,
+        } satisfies grida.program.nodes.VideoNode,
+      });
+      doc.external_assets = {
+        [digest]: {
+          digest,
+          kind: "video",
+          mime_type: "video/mp4",
+          display_name: "Loop.mp4",
+          bytes: 1024,
+        },
+      };
+
+      roundtripTest<grida.program.nodes.VideoNode>(
+        doc,
+        nodeId,
+        "video",
+        (node) => {
+          expect(node.asset_digest).toBe(digest);
+          expect(node.poster_asset_digest).toBe(poster);
+          expect(node.fit).toBe("contain");
+          expect(node.loop).toBe(true);
+          expect(node.muted).toBe(false);
+          expect(node.volume).toBeCloseTo(0.75);
+          expect(node.trim_start_seconds).toBeCloseTo(1.25);
+          expect(node.trim_end_seconds).toBeCloseTo(9.5);
+          expect(node.layout_target_width).toBe(640);
+        }
+      );
+    });
+  });
+
   describe("cg.TextAlign", () => {
     it.each([
       ["left", "left"],

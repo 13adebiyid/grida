@@ -694,6 +694,9 @@ impl<'a> NodePainter<'a> {
             Node::HTMLEmbed(_) => {
                 // TODO: implement HTMLEmbed debug rendering
             }
+            Node::Video(_) => {
+                // Browser media overlay owns video pixel rendering.
+            }
         }
     }
 }

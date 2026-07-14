@@ -537,7 +537,7 @@ export namespace grida {
 
 // oxlint-disable-next-line eslint(no-unused-vars)
 export namespace grida.program.document {
-  export const SCHEMA_VERSION = "0.91.1-beta+20260714";
+  export const SCHEMA_VERSION = "0.91.2-beta+20260714";
 
   /**
    * Schema version compatibility check.
@@ -2507,13 +2507,23 @@ export namespace grida.program.nodes {
       i.ISourceValue {
     readonly type: "video";
 
+    /** Content-addressed source identity when owned by an external asset repository. */
+    asset_digest?: string;
+    /** Content-addressed poster identity when owned by an external asset repository. */
+    poster_asset_digest?: string;
+
     /**
      * @see https://developer.mozilla.org/en-US/docs/Web/HTML/Element/video#poster
      */
     poster?: tokens.StringValueExpression;
     loop: boolean;
     muted: boolean;
+    /** Normalized audio gain in the inclusive range 0..1. */
+    volume?: number;
     autoplay: boolean;
+    trim_start_seconds?: number;
+    /** Negative means play until the source duration. */
+    trim_end_seconds?: number;
   }
 
   export interface ComputedVideoNode extends __ReplaceSubset<

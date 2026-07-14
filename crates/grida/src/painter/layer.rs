@@ -1520,6 +1520,12 @@ impl LayerList {
                     mask: n.mask,
                 }
             }
+            Node::Video(n) => FlattenResult {
+                // Media pixels are composited by the browser host. Keeping the
+                // node in geometry/layout makes it selectable and editable.
+                commands: Vec::new(),
+                mask: n.mask,
+            },
             Node::AttributedText(n) => {
                 let text_bounds =
                     scene_cache

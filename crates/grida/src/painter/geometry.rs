@@ -298,6 +298,24 @@ pub fn build_shape(node: &Node, bounds: &Rectangle) -> PainterShape {
                 PainterShape::from_rect(rect)
             }
         }
+        Node::Video(n) => {
+            let r = n.corner_radius;
+            if !r.is_zero() {
+                if n.corner_smoothing.value() > 0.0 {
+                    let smooth = OrthogonalSmoothRRectShape {
+                        width: n.size.width,
+                        height: n.size.height,
+                        corner_radius: r,
+                        corner_smoothing: n.corner_smoothing,
+                    };
+                    PainterShape::from_path(build_orthogonal_smooth_rrect_path(&smooth))
+                } else {
+                    PainterShape::from_rrect(build_rrect(&n.to_own_shape()))
+                }
+            } else {
+                PainterShape::from_rect(Rect::from_xywh(0.0, 0.0, n.size.width, n.size.height))
+            }
+        }
         Node::Tray(n) => {
             // Tray uses resolved bounds (like Container) with optional corner radius
             let width = bounds.width;

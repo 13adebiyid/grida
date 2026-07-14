@@ -208,6 +208,7 @@ fn layout_diff(scene: &Scene, width: i32, height: i32, threshold: f32) {
                         grida::node::schema::Node::Rectangle(_) => "Rectangle",
                         grida::node::schema::Node::Ellipse(_) => "Ellipse",
                         grida::node::schema::Node::Image(_) => "Image",
+                        grida::node::schema::Node::Video(_) => "Video",
                         grida::node::schema::Node::Line(_) => "Line",
                         grida::node::schema::Node::Polygon(_) => "Polygon",
                         grida::node::schema::Node::RegularPolygon(_) => "RegularPolygon",

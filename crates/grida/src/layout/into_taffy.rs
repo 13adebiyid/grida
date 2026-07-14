@@ -286,6 +286,7 @@ pub(crate) fn node_to_taffy_style(node: &Node, _graph: &SceneGraph, _node_id: &N
         Node::TextSpan(n) => n.into(),
         Node::AttributedText(n) => n.into(),
         Node::Image(n) => n.into(),
+        Node::Video(n) => n.into(),
         Node::Line(n) => n.into(),
         Node::Polygon(n) => n.into(),
         Node::RegularPolygon(n) => n.into(),
@@ -396,6 +397,19 @@ impl From<&crate::node::schema::EllipseNodeRec> for Style {
 /// Convert ImageNodeRec to Taffy Style
 impl From<&crate::node::schema::ImageNodeRec> for Style {
     fn from(node: &crate::node::schema::ImageNodeRec) -> Self {
+        let style = Style {
+            size: Size {
+                width: Dimension::length(node.size.width),
+                height: Dimension::length(node.size.height),
+            },
+            ..grida_style_default()
+        };
+        apply_layout_child(style, &node.layout_child, node.transform)
+    }
+}
+
+impl From<&crate::node::schema::VideoNodeRec> for Style {
+    fn from(node: &crate::node::schema::VideoNodeRec) -> Self {
         let style = Style {
             size: Size {
                 width: Dimension::length(node.size.width),

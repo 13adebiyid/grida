@@ -4,6 +4,7 @@ pub use crate::cg::types::{FontFeature, FontVariation};
 use crate::node::scene_graph::SceneGraph;
 use crate::shape::*;
 use crate::vectornetwork::*;
+use math2::box_fit::BoxFit;
 use math2::rect::Rectangle;
 use math2::transform::AffineTransform;
 // Re-export the ID types from the id module
@@ -882,6 +883,7 @@ pub enum NodeTypeTag {
     Image,
     MarkdownEmbed,
     HTMLEmbed,
+    Video,
 }
 
 /// Compact, layer-relevant data extracted from a `Node` at construction time.
@@ -1107,6 +1109,16 @@ pub fn extract_layer_core(node: &Node) -> NodeLayerCore {
             node_type: NodeTypeTag::HTMLEmbed,
             is_flex: false,
         },
+        Node::Video(n) => NodeLayerCore {
+            active: n.active,
+            opacity: n.opacity,
+            blend_mode: n.blend_mode,
+            mask: n.mask,
+            clips_content: false,
+            has_effects: !n.effects.is_empty(),
+            node_type: NodeTypeTag::Video,
+            is_flex: false,
+        },
     }
 }
 
@@ -1131,6 +1143,7 @@ pub enum Node {
     Image(ImageNodeRec),
     MarkdownEmbed(MarkdownEmbedNodeRec),
     HTMLEmbed(HTMLEmbedNodeRec),
+    Video(VideoNodeRec),
 }
 
 // node trait
@@ -1160,6 +1173,7 @@ impl NodeTrait for Node {
             Node::Image(n) => n.active,
             Node::MarkdownEmbed(n) => n.active,
             Node::HTMLEmbed(n) => n.active,
+            Node::Video(n) => n.active,
         }
     }
 }
@@ -1185,6 +1199,7 @@ impl Node {
             Node::Image(n) => n.mask,
             Node::MarkdownEmbed(n) => n.mask,
             Node::HTMLEmbed(n) => n.mask,
+            Node::Video(n) => n.mask,
             Node::Error(_) => None,
         }
     }
@@ -1212,6 +1227,7 @@ impl Node {
             Node::Image(n) => n.opacity,
             Node::MarkdownEmbed(n) => n.opacity,
             Node::HTMLEmbed(n) => n.opacity,
+            Node::Video(n) => n.opacity,
         }
     }
 
@@ -1237,6 +1253,7 @@ impl Node {
             Node::Image(_) => "Image",
             Node::MarkdownEmbed(_) => "MarkdownEmbed",
             Node::HTMLEmbed(_) => "HTMLEmbed",
+            Node::Video(_) => "Video",
         }
     }
 
@@ -1264,6 +1281,7 @@ impl Node {
             // Markdown renders its own content; background fills are separate
             Node::MarkdownEmbed(n) => Some(&n.fills),
             Node::HTMLEmbed(n) => Some(&n.fills),
+            Node::Video(_) => None,
             Node::Error(_) | Node::Group(_) | Node::Line(_) => None,
         }
     }
@@ -1291,6 +1309,7 @@ impl Node {
             Node::Image(n) => n.blend_mode,
             Node::MarkdownEmbed(n) => n.blend_mode,
             Node::HTMLEmbed(n) => n.blend_mode,
+            Node::Video(n) => n.blend_mode,
         }
     }
 
@@ -1317,6 +1336,7 @@ impl Node {
             Node::Image(n) => Some(&n.effects),
             Node::MarkdownEmbed(n) => Some(&n.effects),
             Node::HTMLEmbed(n) => Some(&n.effects),
+            Node::Video(n) => Some(&n.effects),
         }
     }
 
@@ -1878,6 +1898,74 @@ impl NodeGeometryMixin for ImageNodeRec {
         } else {
             0.0
         }
+    }
+}
+
+/// A durable video layer. The Rust canvas renders its rectangular geometry;
+/// browser hosts composite the decoded media using the same node transform.
+#[derive(Debug, Clone)]
+pub struct VideoNodeRec {
+    pub active: bool,
+    pub opacity: f32,
+    pub blend_mode: LayerBlendMode,
+    pub effects: LayerEffects,
+    pub mask: Option<LayerMaskType>,
+    pub transform: AffineTransform,
+    pub size: Size,
+    pub corner_radius: RectangularCornerRadius,
+    pub corner_smoothing: CornerSmoothing,
+    pub source_asset_digest: Option<String>,
+    pub source_uri: Option<String>,
+    pub poster_asset_digest: Option<String>,
+    pub poster_uri: Option<String>,
+    pub fit: BoxFit,
+    pub trim_start_seconds: f64,
+    pub trim_end_seconds: f64,
+    pub loop_playback: bool,
+    pub muted: bool,
+    pub volume: f32,
+    pub autoplay: bool,
+    pub layout_child: Option<LayoutChildStyle>,
+}
+
+impl VideoNodeRec {
+    pub fn to_own_shape(&self) -> RRectShape {
+        RRectShape {
+            width: self.size.width,
+            height: self.size.height,
+            corner_radius: self.corner_radius,
+        }
+    }
+}
+
+impl NodeTransformMixin for VideoNodeRec {
+    fn x(&self) -> f32 {
+        self.transform.x()
+    }
+
+    fn y(&self) -> f32 {
+        self.transform.y()
+    }
+}
+
+impl NodeRectMixin for VideoNodeRec {
+    fn rect(&self) -> Rectangle {
+        Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: self.size.width,
+            height: self.size.height,
+        }
+    }
+}
+
+impl NodeGeometryMixin for VideoNodeRec {
+    fn has_stroke_geometry(&self) -> bool {
+        false
+    }
+
+    fn render_bounds_stroke_width(&self) -> f32 {
+        0.0
     }
 }
 

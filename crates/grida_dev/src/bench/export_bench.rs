@@ -481,6 +481,7 @@ fn node_type_label(node: &Node) -> &'static str {
         Node::Vector(_) => "Vector",
         Node::BooleanOperation(_) => "BooleanOp",
         Node::Image(_) => "Image",
+        Node::Video(_) => "Video",
         Node::MarkdownEmbed(_) => "MarkdownEmbed",
         Node::HTMLEmbed(_) => "HTMLEmbed",
     }

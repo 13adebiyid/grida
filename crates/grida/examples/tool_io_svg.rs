@@ -236,6 +236,7 @@ fn classify_node(node: &Node) -> &'static str {
         Node::RegularStarPolygon(_) => "star_polygon",
         Node::Line(_) => "line",
         Node::Image(_) => "image",
+        Node::Video(_) => "video",
         Node::TextSpan(_) => "tspan",
         Node::AttributedText(_) => "attributed_text",
         Node::Tray(_) => "tray",

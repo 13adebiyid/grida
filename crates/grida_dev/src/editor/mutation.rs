@@ -108,6 +108,7 @@ pub fn node_supports_resize(node: &Node) -> bool {
             | Node::RegularStarPolygon(_)
             | Node::Line(_)
             | Node::Image(_)
+            | Node::Video(_)
             | Node::Error(_)
             | Node::Container(_)
             | Node::Tray(_)
@@ -137,6 +138,7 @@ fn node_transform_mut(node: &mut Node) -> Option<&mut math2::transform::AffineTr
         Node::Path(n) => Some(&mut n.transform),
         Node::Polygon(n) => Some(&mut n.transform),
         Node::Image(n) => Some(&mut n.transform),
+        Node::Video(n) => Some(&mut n.transform),
         Node::Error(n) => Some(&mut n.transform),
         Node::Group(n) => n.transform.as_mut(),
         Node::BooleanOperation(n) => n.transform.as_mut(),
@@ -157,6 +159,7 @@ fn node_size_mut(node: &mut Node) -> Option<&mut Size> {
         Node::RegularStarPolygon(n) => Some(&mut n.size),
         Node::Line(n) => Some(&mut n.size),
         Node::Image(n) => Some(&mut n.size),
+        Node::Video(n) => Some(&mut n.size),
         Node::Error(n) => Some(&mut n.size),
         // MarkdownEmbed uses Option<f32> width/height (like TextSpan),
         // handled directly in resize_node.

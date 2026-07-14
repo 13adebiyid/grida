@@ -356,6 +356,7 @@ pub fn extract_geo_data(node: &Node) -> NodeGeoData {
                     Node::Rectangle(n) => (n.transform, n.size.width, n.size.height, 0.0, 0.0),
                     Node::Ellipse(n) => (n.transform, n.size.width, n.size.height, 0.0, 0.0),
                     Node::Image(n) => (n.transform, n.size.width, n.size.height, 0.0, 0.0),
+                    Node::Video(n) => (n.transform, n.size.width, n.size.height, 0.0, 0.0),
                     Node::RegularPolygon(n) => (n.transform, n.size.width, n.size.height, 0.0, 0.0),
                     Node::RegularStarPolygon(n) => {
                         (n.transform, n.size.width, n.size.height, 0.0, 0.0)
@@ -553,6 +554,7 @@ fn extract_leaf_inflation(node: &Node) -> RenderBoundsInflation {
             n.stroke_style.stroke_align,
             &n.effects,
         ),
+        Node::Video(n) => compute_inflation_uniform(0.0, StrokeAlign::Center, &n.effects),
         Node::Line(n) => {
             compute_inflation_uniform(n.stroke_width, n.get_stroke_align(), &n.effects)
         }

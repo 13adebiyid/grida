@@ -21,6 +21,7 @@ use grida::io::io_grida_fbs;
 use grida::node::scene_graph::SceneGraph;
 use grida::node::schema::*;
 use grida::vectornetwork::*;
+use math2::box_fit::BoxFit;
 use math2::transform::AffineTransform;
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1801,6 +1802,42 @@ fn gen_path_node_complex() {
         vec![1],
     );
     assert_roundtrip_scene(&scene, "s1", "path_node_complex");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// VideoNode
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn gen_video_node_content_addressed() {
+    let node = Node::Video(VideoNodeRec {
+        active: true,
+        opacity: 0.8,
+        blend_mode: LayerBlendMode::Blend(BlendMode::Normal),
+        effects: LayerEffects::default(),
+        mask: None,
+        transform: AffineTransform::from_box_center(20.0, 30.0, 640.0, 360.0, 5.0),
+        size: Size {
+            width: 640.0,
+            height: 360.0,
+        },
+        corner_radius: RectangularCornerRadius::default(),
+        corner_smoothing: CornerSmoothing(0.0),
+        source_asset_digest: Some("a".repeat(64)),
+        source_uri: None,
+        poster_asset_digest: Some("b".repeat(64)),
+        poster_uri: None,
+        fit: BoxFit::Contain,
+        trim_start_seconds: 1.25,
+        trim_end_seconds: 9.5,
+        loop_playback: true,
+        muted: false,
+        volume: 0.75,
+        autoplay: true,
+        layout_child: None,
+    });
+    let scene = build_scene("Video", None, vec![(1, node)], HashMap::new(), vec![1]);
+    assert_roundtrip_scene(&scene, "s1", "video_node_content_addressed");
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

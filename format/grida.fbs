@@ -1507,6 +1507,30 @@ table MarkdownEmbedNode {
   properties:MarkdownEmbedNodeProperties;
 }
 
+/// Native video layer. Imported and authored video share this representation.
+/// Content-addressed documents use `source_asset_digest`; `source_uri` exists
+/// for ordinary URL-authored documents and must never contain a host file path.
+table VideoNodeProperties {
+  source_asset_digest:string (id: 0);
+  source_uri:string (id: 1);
+  poster_asset_digest:string (id: 2);
+  poster_uri:string (id: 3);
+  fit:BoxFit = Cover (id: 4);
+  trim_start_seconds:double = 0 (id: 5);
+  trim_end_seconds:double = -1 (id: 6);
+  loop:bool = true (id: 7);
+  muted:bool = true (id: 8);
+  volume:float = 0 (id: 9);
+  autoplay:bool = true (id: 10);
+  corner_radius:RectangularCornerRadiusTrait (id: 11);
+}
+
+table VideoNode {
+  node:SystemNodeTrait (required);
+  layer:LayerTrait (required);
+  properties:VideoNodeProperties;
+}
+
 // -----------------------------------------------------------------------------
 // Node encoding model: union-per-variant (why this, not an "all-flat" Node table)
 // -----------------------------------------------------------------------------
@@ -1602,6 +1626,7 @@ union Node {
   AttributedTextNode,
   TrayNode,
   MarkdownEmbedNode, // GFM markdown rendered directly to a Skia Picture (render-only)
+  VideoNode,
 }
 
 // -----------------------------------------------------------------------------

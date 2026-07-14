@@ -23,7 +23,7 @@ use rustc_hash::FxHashMap;
 ///
 /// Keep in sync with the TS constant `grida.program.document.SCHEMA_VERSION`
 /// (`packages/grida-canvas-schema/grida.ts`).
-pub const SCHEMA_VERSION: &str = "0.91.1-beta+20260714";
+pub const SCHEMA_VERSION: &str = "0.91.2-beta+20260714";
 
 use crate::cg::{
     alignment::Alignment,
@@ -58,7 +58,7 @@ use crate::node::{
         LayoutContainerStyle, LayoutDimensionStyle, LayoutPositioningBasis, LineNodeRec,
         MarkdownEmbedNodeRec, Node, PathNodeRec, RectangleNodeRec, RegularPolygonNodeRec,
         RegularStarPolygonNodeRec, Scene, Size, StrokeStyle, TextSpanNodeRec, TrayNodeRec,
-        VectorNodeRec,
+        VectorNodeRec, VideoNodeRec,
     },
 };
 use crate::vectornetwork::{
@@ -449,6 +449,9 @@ fn decode_all_inner(bytes: &[u8]) -> Result<DecodeResult, FbsDecodeError> {
                         decode_markdown_embed_node
                     );
                 }
+                fbs::Node::VideoNode => {
+                    decode_layer_node!(slot, node_as_video_node, decode_video_node);
+                }
                 _ => {}
             }
         }
@@ -687,6 +690,7 @@ pub fn decode_single_node(bytes: &[u8]) -> Result<DecodedSingleNode, FbsDecodeEr
         fbs::Node::MarkdownEmbedNode => {
             decode_layer_slot!(node_as_markdown_embed_node, decode_markdown_embed_node)
         }
+        fbs::Node::VideoNode => decode_layer_slot!(node_as_video_node, decode_video_node),
         // SceneNode and anything else are not valid per-node sync targets.
         _ => return Err(FbsDecodeError::UnsupportedNodeType),
     };
@@ -2245,6 +2249,56 @@ fn decode_markdown_embed_node(
     })
 }
 
+fn decode_video_node(
+    lc: &LayerCommon,
+    layer: &fbs::LayerTrait<'_>,
+    vn: &fbs::VideoNode<'_>,
+) -> Node {
+    let sl = decode_shape_layout(layer, lc.rotation_cos_sin);
+    let props = vn.properties();
+    Node::Video(VideoNodeRec {
+        active: lc.active,
+        opacity: lc.opacity,
+        blend_mode: lc.blend_mode,
+        effects: lc.effects.clone(),
+        mask: lc.mask,
+        transform: sl.transform,
+        size: sl.size,
+        corner_radius: decode_corner_radius(props.as_ref().and_then(|p| p.corner_radius())),
+        corner_smoothing: decode_corner_smoothing(props.as_ref().and_then(|p| p.corner_radius())),
+        source_asset_digest: props
+            .as_ref()
+            .and_then(|p| p.source_asset_digest())
+            .map(str::to_owned),
+        source_uri: props
+            .as_ref()
+            .and_then(|p| p.source_uri())
+            .map(str::to_owned),
+        poster_asset_digest: props
+            .as_ref()
+            .and_then(|p| p.poster_asset_digest())
+            .map(str::to_owned),
+        poster_uri: props
+            .as_ref()
+            .and_then(|p| p.poster_uri())
+            .map(str::to_owned),
+        fit: props
+            .as_ref()
+            .map(|p| decode_box_fit(p.fit()))
+            .unwrap_or(BoxFit::Cover),
+        trim_start_seconds: props
+            .as_ref()
+            .map(|p| p.trim_start_seconds())
+            .unwrap_or(0.0),
+        trim_end_seconds: props.as_ref().map(|p| p.trim_end_seconds()).unwrap_or(-1.0),
+        loop_playback: props.as_ref().map(|p| p.loop_()).unwrap_or(true),
+        muted: props.as_ref().map(|p| p.muted()).unwrap_or(true),
+        volume: props.as_ref().map(|p| p.volume()).unwrap_or(0.0),
+        autoplay: props.as_ref().map(|p| p.autoplay()).unwrap_or(true),
+        layout_child: lc.layout_child.clone(),
+    })
+}
+
 fn decode_attributed_text_node(
     lc: &LayerCommon,
     layer: &fbs::LayerTrait<'_>,
@@ -2698,6 +2752,7 @@ fn encode_node<'a, A: flatbuffers::Allocator + 'a>(
             encode_attributed_text_node(fbb, r, node_id, parent_id, position)
         }
         Node::MarkdownEmbed(r) => encode_markdown_embed_node(fbb, r, node_id, parent_id, position),
+        Node::Video(r) => encode_video_node(fbb, r, node_id, parent_id, position),
         // Fallback: encode as UnknownNode
         _ => {
             let sys = encode_system_node_trait(fbb, node_id, "", true, false);
@@ -4713,6 +4768,83 @@ fn encode_markdown_embed_node<'a, A: flatbuffers::Allocator + 'a>(
         },
     );
     make_node_slot(fbb, fbs::Node::MarkdownEmbedNode, mn.as_union_value())
+}
+
+fn encode_video_node<'a, A: flatbuffers::Allocator + 'a>(
+    fbb: &mut flatbuffers::FlatBufferBuilder<'a, A>,
+    r: &VideoNodeRec,
+    node_id: &str,
+    parent_id: &str,
+    position: &str,
+) -> flatbuffers::WIPOffset<fbs::NodeSlot<'a>> {
+    let (x, y) = reverse_from_box_center(&r.transform, r.size.width, r.size.height);
+    let plt = affine_to_rotation_transform(&r.transform);
+    let sys = encode_system_node_trait(fbb, node_id, "", r.active, false);
+    let layout = encode_shape_layout(
+        fbb,
+        x,
+        y,
+        Some(r.size.width),
+        Some(r.size.height),
+        &r.layout_child,
+    );
+    let layer = encode_layer_trait(
+        fbb,
+        &LayerTraitInput {
+            parent_id,
+            position,
+            opacity: r.opacity,
+            blend_mode: r.blend_mode,
+            mask: r.mask,
+            effects: &r.effects,
+            post_layout_transform: plt,
+            layout: Some(layout),
+        },
+    );
+    let source_asset_digest = r
+        .source_asset_digest
+        .as_ref()
+        .map(|value| fbb.create_string(value));
+    let source_uri = r.source_uri.as_ref().map(|value| fbb.create_string(value));
+    let poster_asset_digest = r
+        .poster_asset_digest
+        .as_ref()
+        .map(|value| fbb.create_string(value));
+    let poster_uri = r.poster_uri.as_ref().map(|value| fbb.create_string(value));
+    let rectangular_corner_radius = encode_rectangular_corner_radius(&r.corner_radius);
+    let corner_radius = fbs::RectangularCornerRadiusTrait::create(
+        fbb,
+        &fbs::RectangularCornerRadiusTraitArgs {
+            rectangular_corner_radius: Some(&rectangular_corner_radius),
+            corner_smoothing: r.corner_smoothing.value(),
+        },
+    );
+    let properties = fbs::VideoNodeProperties::create(
+        fbb,
+        &fbs::VideoNodePropertiesArgs {
+            source_asset_digest,
+            source_uri,
+            poster_asset_digest,
+            poster_uri,
+            fit: encode_box_fit(r.fit),
+            trim_start_seconds: r.trim_start_seconds,
+            trim_end_seconds: r.trim_end_seconds,
+            loop_: r.loop_playback,
+            muted: r.muted,
+            volume: r.volume,
+            autoplay: r.autoplay,
+            corner_radius: Some(corner_radius),
+        },
+    );
+    let node = fbs::VideoNode::create(
+        fbb,
+        &fbs::VideoNodeArgs {
+            node: Some(sys),
+            layer: Some(layer),
+            properties: Some(properties),
+        },
+    );
+    make_node_slot(fbb, fbs::Node::VideoNode, node.as_union_value())
 }
 
 fn encode_boolean_operation_node<'a, A: flatbuffers::Allocator + 'a>(

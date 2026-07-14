@@ -2042,6 +2042,103 @@ export namespace format {
             nodeType = fbs.Node.ContainerNode;
             break;
           }
+          case "video": {
+            const videoNode = node as grida.program.nodes.VideoNode;
+            const sourceDigest = /^[a-f0-9]{64}$/.test(
+              videoNode.asset_digest ?? ""
+            )
+              ? videoNode.asset_digest
+              : undefined;
+            const posterDigest = /^[a-f0-9]{64}$/.test(
+              videoNode.poster_asset_digest ?? ""
+            )
+              ? videoNode.poster_asset_digest
+              : undefined;
+            const sourceUri =
+              !sourceDigest &&
+              typeof videoNode.src === "string" &&
+              /^https?:\/\//i.test(videoNode.src)
+                ? videoNode.src
+                : undefined;
+            const posterUri =
+              !posterDigest &&
+              typeof videoNode.poster === "string" &&
+              /^https?:\/\//i.test(videoNode.poster)
+                ? videoNode.poster
+                : undefined;
+            const sourceDigestOffset = sourceDigest
+              ? builder.createString(sourceDigest)
+              : 0;
+            const sourceUriOffset = sourceUri
+              ? builder.createString(sourceUri)
+              : 0;
+            const posterDigestOffset = posterDigest
+              ? builder.createString(posterDigest)
+              : 0;
+            const posterUriOffset = posterUri
+              ? builder.createString(posterUri)
+              : 0;
+            const cornerRadiusOffset =
+              format.shape.encode.rectangularCornerRadiusTrait(builder, {
+                rectangular_corner_radius_top_left: videoNode.corner_radius,
+                rectangular_corner_radius_top_right: videoNode.corner_radius,
+                rectangular_corner_radius_bottom_left: videoNode.corner_radius,
+                rectangular_corner_radius_bottom_right: videoNode.corner_radius,
+              });
+
+            fbs.VideoNodeProperties.startVideoNodeProperties(builder);
+            if (sourceDigestOffset) {
+              fbs.VideoNodeProperties.addSourceAssetDigest(
+                builder,
+                sourceDigestOffset
+              );
+            }
+            if (sourceUriOffset) {
+              fbs.VideoNodeProperties.addSourceUri(builder, sourceUriOffset);
+            }
+            if (posterDigestOffset) {
+              fbs.VideoNodeProperties.addPosterAssetDigest(
+                builder,
+                posterDigestOffset
+              );
+            }
+            if (posterUriOffset) {
+              fbs.VideoNodeProperties.addPosterUri(builder, posterUriOffset);
+            }
+            fbs.VideoNodeProperties.addFit(
+              builder,
+              enums.BOX_FIT_ENCODE.get(videoNode.fit) ?? fbs.BoxFit.Cover
+            );
+            fbs.VideoNodeProperties.addTrimStartSeconds(
+              builder,
+              videoNode.trim_start_seconds ?? 0
+            );
+            fbs.VideoNodeProperties.addTrimEndSeconds(
+              builder,
+              videoNode.trim_end_seconds ?? -1
+            );
+            fbs.VideoNodeProperties.addLoop(builder, videoNode.loop);
+            fbs.VideoNodeProperties.addMuted(builder, videoNode.muted);
+            fbs.VideoNodeProperties.addVolume(
+              builder,
+              Math.max(0, Math.min(1, videoNode.volume ?? 0))
+            );
+            fbs.VideoNodeProperties.addAutoplay(builder, videoNode.autoplay);
+            fbs.VideoNodeProperties.addCornerRadius(
+              builder,
+              cornerRadiusOffset
+            );
+            const propertiesOffset =
+              fbs.VideoNodeProperties.endVideoNodeProperties(builder);
+
+            fbs.VideoNode.startVideoNode(builder);
+            fbs.VideoNode.addNode(builder, systemNodeTraitOffset);
+            fbs.VideoNode.addLayer(builder, layerOffset);
+            fbs.VideoNode.addProperties(builder, propertiesOffset);
+            nodeOffset = fbs.VideoNode.endVideoNode(builder);
+            nodeType = fbs.Node.VideoNode;
+            break;
+          }
           case "line": {
             const lineNode = node as grida.program.nodes.LineNode;
 
@@ -6313,6 +6410,52 @@ export namespace format {
           } satisfies grida.program.nodes.MarkdownNode;
         }
 
+        export function video(
+          n: fbs.VideoNode,
+          id: string,
+          systemNode: fbs.SystemNodeTrait,
+          _layer: fbs.LayerTrait | null,
+          opacity: number,
+          layoutFields: ReturnType<typeof format.layout.decode.nodeLayout>,
+          effects?: grida.program.nodes.i.IEffects
+        ): grida.program.nodes.VideoNode {
+          const props = n.properties();
+          const sourceDigest = props?.sourceAssetDigest() ?? undefined;
+          const sourceUri = props?.sourceUri() ?? undefined;
+          const posterDigest = props?.posterAssetDigest() ?? undefined;
+          const posterUri = props?.posterUri() ?? undefined;
+          const cornerRadius = format.shape.decode.rectangularCornerRadiusTrait(
+            props?.cornerRadius() ?? null
+          );
+          return {
+            type: "video",
+            id,
+            name: systemNode.name() ?? "video",
+            active: systemNode.active() ?? true,
+            locked: systemNode.locked() ?? false,
+            opacity,
+            z_index: 0,
+            ...layoutFields,
+            src: sourceDigest
+              ? `res://videos/${sourceDigest}`
+              : (sourceUri ?? ""),
+            ...(sourceDigest ? { asset_digest: sourceDigest } : {}),
+            poster: posterDigest ? `res://images/${posterDigest}` : posterUri,
+            ...(posterDigest ? { poster_asset_digest: posterDigest } : {}),
+            fit:
+              enums.BOX_FIT_DECODE.get(props?.fit() ?? fbs.BoxFit.Cover) ??
+              "cover",
+            corner_radius: cornerRadius.rectangular_corner_radius_top_left ?? 0,
+            loop: props?.loop() ?? true,
+            muted: props?.muted() ?? true,
+            volume: Math.max(0, Math.min(1, props?.volume() ?? 0)),
+            autoplay: props?.autoplay() ?? true,
+            trim_start_seconds: Math.max(0, props?.trimStartSeconds() ?? 0),
+            trim_end_seconds: props?.trimEndSeconds() ?? -1,
+            ...effects,
+          } satisfies grida.program.nodes.VideoNode;
+        }
+
         /**
          * Decodes AttributedTextNode.
          */
@@ -6965,7 +7108,8 @@ export namespace format {
             | fbs.LineNode
             | fbs.VectorNode
             | fbs.BooleanOperationNode
-            | fbs.GroupNode;
+            | fbs.GroupNode
+            | fbs.VideoNode;
           const nodeWithLayer = typedNode as NodeWithLayer;
           const systemNode = nodeWithLayer.node()!;
           const layer = nodeWithLayer.layer()!;
@@ -7038,6 +7182,17 @@ export namespace format {
             case fbs.Node.MarkdownEmbedNode:
               nodes[id] = nodeTypes.markdownEmbed(
                 typedNode as fbs.MarkdownEmbedNode,
+                id,
+                systemNode,
+                layer,
+                opacity,
+                layoutFields,
+                decodedEffects
+              );
+              break;
+            case fbs.Node.VideoNode:
+              nodes[id] = nodeTypes.video(
+                typedNode as fbs.VideoNode,
                 id,
                 systemNode,
                 layer,
