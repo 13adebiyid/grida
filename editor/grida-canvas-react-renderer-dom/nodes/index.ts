@@ -1,6 +1,7 @@
 import { ContainerWidget } from "./container";
 import { TrayWidget } from "./tray";
 import { TextSpanWidget } from "./tspan";
+import { AttributedTextWidget } from "./attributed-text";
 import { ImageWidget } from "./image";
 import { VideoWidget } from "./video";
 import { RectangleWidget } from "./rectangle";
@@ -28,6 +29,7 @@ export namespace ReactNodeRenderers {
   export const polygon = RegularPolygonWidget;
   export const star = RegularStarPolygonWidget;
   export const tspan = TextSpanWidget;
+  export const text = AttributedTextWidget;
   export const image = ImageWidget;
   export const video = VideoWidget;
   export const richtext = RichTextWidget;

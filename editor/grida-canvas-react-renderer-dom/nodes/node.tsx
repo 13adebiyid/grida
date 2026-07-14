@@ -89,6 +89,7 @@ export function NodeElement<P extends Record<string, unknown>>({
       case "image":
       case "video":
       case "tspan":
+      case "text":
       case "bitmap":
       case "vector":
       case "line":
