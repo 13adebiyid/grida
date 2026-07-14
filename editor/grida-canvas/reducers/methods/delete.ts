@@ -51,6 +51,35 @@ export function self_try_remove_node<S extends editor.state.IEditorState>(
   // Remove node and its subtree (mutates draft.document directly)
   const ids = graphInstance.rm(node_id);
 
+  const removedAnimations = new Set<string>();
+  for (const [animationId, animation] of Object.entries(
+    draft.document.animations ?? {}
+  )) {
+    if (animation.target_node_id && ids.includes(animation.target_node_id)) {
+      removedAnimations.add(animationId);
+    }
+  }
+  let animationRemoved = true;
+  while (animationRemoved) {
+    animationRemoved = false;
+    for (const [animationId, animation] of Object.entries(
+      draft.document.animations ?? {}
+    )) {
+      if (
+        !removedAnimations.has(animationId) &&
+        animation.depends_on.some((dependency) =>
+          removedAnimations.has(dependency)
+        )
+      ) {
+        removedAnimations.add(animationId);
+        animationRemoved = true;
+      }
+    }
+  }
+  for (const animationId of removedAnimations) {
+    delete draft.document.animations?.[animationId];
+  }
+
   // Update context from graph's cached LUT
   draft.document_ctx = graphInstance.lut;
 

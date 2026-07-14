@@ -28,6 +28,7 @@
     "@faker-js/faker": "^8.4.1",
     "@fingerprintjs/fingerprintjs": "^4.2.2",
     "@formatjs/intl-localematcher": "^0.6.1",
+    "@grida/animation": "workspace:*",
     "@grida/bitmap": "workspace:*",
     "@grida/canvas-sync": "workspace:*",
     "@grida/canvas-wasm": "workspace:*",

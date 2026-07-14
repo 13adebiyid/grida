@@ -343,6 +343,9 @@ importers:
       '@formatjs/intl-localematcher':
         specifier: ^0.6.1
         version: 0.6.2
+      '@grida/animation':
+        specifier: workspace:*
+        version: link:../packages/grida-animation
       '@grida/bitmap':
         specifier: workspace:*
         version: link:../packages/grida-canvas-bitmap

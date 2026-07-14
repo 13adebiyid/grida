@@ -40,6 +40,7 @@ export type EditorAction =
 export type DocumentAction =
   | LoadSceneAction
   | SceneAction
+  | AnimationAction
   | SetIsolationAction
   | EditorSelectAction
   | EditorTitleBarHoverAction
@@ -254,6 +255,29 @@ export interface ChangeSceneBackgroundAction {
 export interface ReorderScenesAction {
   type: "scenes/reorder";
   sceneIds: string[];
+}
+
+export type AnimationAction =
+  | PutAnimationAction
+  | ChangeAnimationAction
+  | DeleteAnimationAction;
+
+export interface PutAnimationAction {
+  type: "animations/put";
+  animation: grida.program.document.animation.Clip;
+}
+
+export interface ChangeAnimationAction {
+  type: "animations/change";
+  animation_id: string;
+  patch: Partial<Omit<grida.program.document.animation.Clip, "id">>;
+}
+
+export interface DeleteAnimationAction {
+  type: "animations/delete";
+  animation_id: string;
+  /** Delete dependent clips as one undoable operation. */
+  cascade?: boolean;
 }
 
 export interface EditorSelectAction {

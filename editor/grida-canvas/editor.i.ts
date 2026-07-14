@@ -3155,6 +3155,12 @@ export namespace editor.api {
       scene_id: string,
       backgroundColor: grida.program.document.ISceneBackground["background_color"]
     ): void;
+    putAnimation(animation: grida.program.document.animation.Clip): void;
+    changeAnimation(
+      animation_id: string,
+      patch: Partial<Omit<grida.program.document.animation.Clip, "id">>
+    ): void;
+    deleteAnimation(animation_id: string, cascade?: boolean): void;
 
     /**
      * Query nodes using selectors and return their IDs.

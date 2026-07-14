@@ -68,6 +68,7 @@ import { createTrackedGraph } from "./utils/tracked-graph";
 import { EDITOR_GRAPH_POLICY } from "@/grida-canvas/policy";
 import { generateKeyBetween } from "@grida/sequence";
 import "core-js/features/object/group-by";
+import { validateAnimationRepository } from "@grida/animation";
 
 /**
  * the padding applied to the anchors (siblings) for dynamic next placement
@@ -114,6 +115,63 @@ export default function documentReducer<S extends editor.state.IEditorState>(
   assert(state.scene_id, "scene_id is required for autolayout");
 
   switch (action.type) {
+    case "animations/put": {
+      const animations = {
+        ...state.document.animations,
+        [action.animation.id]: action.animation,
+      };
+      if (action.animation.id.length === 0) return state;
+      if (
+        validateAnimationRepository({ nodes: state.document.nodes, animations })
+          .length
+      )
+        return state;
+      return updateState(state, (draft) => {
+        draft.document.animations ??= {};
+        draft.document.animations[action.animation.id] = action.animation;
+      });
+    }
+    case "animations/change": {
+      const current = state.document.animations?.[action.animation_id];
+      if (!current || "id" in action.patch) return state;
+      const animations = {
+        ...state.document.animations,
+        [action.animation_id]: { ...current, ...action.patch },
+      };
+      if (
+        validateAnimationRepository({ nodes: state.document.nodes, animations })
+          .length
+      )
+        return state;
+      return updateState(state, (draft) => {
+        Object.assign(
+          draft.document.animations![action.animation_id]!,
+          action.patch
+        );
+      });
+    }
+    case "animations/delete": {
+      const repository = state.document.animations ?? {};
+      if (!repository[action.animation_id]) return state;
+      const removing = new Set([action.animation_id]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const clip of Object.values(repository)) {
+          if (
+            !removing.has(clip.id) &&
+            clip.depends_on.some((dependency) => removing.has(dependency))
+          ) {
+            if (!action.cascade) return state;
+            removing.add(clip.id);
+            changed = true;
+          }
+        }
+      }
+      return updateState(state, (draft) => {
+        for (const id of removing) delete draft.document.animations?.[id];
+      });
+    }
     case "scenes/new": {
       const { scene } = action;
       const scene_id = scene?.id ?? context.idgen.next();
@@ -192,6 +250,18 @@ export default function documentReducer<S extends editor.state.IEditorState>(
           context.mutation_buffer
         );
         const __removed_ids = graph.rm(scene_id);
+
+        for (const [animationId, animation] of Object.entries(
+          draft.document.animations ?? {}
+        )) {
+          if (
+            animation.scene_id === scene_id ||
+            (animation.target_node_id &&
+              __removed_ids.includes(animation.target_node_id))
+          ) {
+            delete draft.document.animations?.[animationId];
+          }
+        }
 
         // Remove from scenes_ref array
         draft.document.scenes_ref = draft.document.scenes_ref.filter(

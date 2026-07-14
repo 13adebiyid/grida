@@ -951,6 +951,21 @@ class EditorDocumentStore
     });
   }
 
+  public putAnimation(animation: grida.program.document.animation.Clip) {
+    this.dispatch({ type: "animations/put", animation });
+  }
+
+  public changeAnimation(
+    animation_id: string,
+    patch: Partial<Omit<grida.program.document.animation.Clip, "id">>
+  ) {
+    this.dispatch({ type: "animations/change", animation_id, patch });
+  }
+
+  public deleteAnimation(animation_id: string, cascade: boolean = false) {
+    this.dispatch({ type: "animations/delete", animation_id, cascade });
+  }
+
   public async createNodeFromSvg(
     svg: string
   ): Promise<NodeProxy<grida.program.nodes.ContainerNode>> {
