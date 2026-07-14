@@ -36,19 +36,8 @@ import {
 import {
   useContentEditModeMinimalState,
   useCurrentSceneState,
-  useNodeState,
   useToolState,
 } from "@/grida-canvas-react/provider";
-import { FeShadowProperties } from "@/scaffolds/sidecontrol/controls/fe";
-import { PropertyLine, PropertyLineLabel } from "@/scaffolds/sidecontrol/ui";
-import InputPropertyNumber from "@/scaffolds/sidecontrol/ui/number";
-import {
-  PropertySection,
-  PropertySectionContent,
-  PropertySectionHeaderItem,
-  PropertySectionHeaderLabel,
-  PropertySectionHeaderActions,
-} from "@/scaffolds/sidecontrol/ui";
 import { GridaLogo } from "@/components/grida-logo";
 import { DevtoolsPanel } from "@/grida-canvas-react/devtools";
 import {
@@ -62,7 +51,6 @@ import {
 } from "./bible-helper-local-fonts";
 import {
   PlusIcon,
-  MinusIcon,
   Cross1Icon,
   InfoCircledIcon,
   ChevronRightIcon,
@@ -184,6 +172,10 @@ import {
   readPosterSourceBlobKey,
   requestBgVideoPosterFromHost,
 } from "./rhema-bg-video-poster";
+import {
+  fetchVerifiedExternalAsset,
+  requestExternalAssetLocations,
+} from "./rhema-external-assets";
 import { STAGE_COMPONENTS } from "./stage-components";
 import { StageComponentsToolbar } from "./stage-toolbar";
 import { STAGE_TEMPLATES } from "./stage-templates";
@@ -761,6 +753,66 @@ export default function CanvasPlayground({
       parentOrigin
     );
   }, [dirty, parentOrigin, profile]);
+
+  // Native documents refer to imported images by CAS digest. The renderer
+  // reports missing refs; the host returns only read-only rhema-local URLs.
+  // Verify both size and SHA-256 before registering bytes in the WASM cache.
+  useEffect(() => {
+    if (profile !== "bible-helper" || !parentOrigin || !canvasReady) return;
+    const pending = new Set<string>();
+    const retryAfter = new Map<string, number>();
+    const abort = new AbortController();
+    instance.onUnresolvedImages = (refs) => {
+      const repository = instance.state.document.external_assets ?? {};
+      const now = Date.now();
+      const wanted = refs.filter(
+        (ref) =>
+          repository[ref]?.kind === "image" &&
+          !pending.has(ref) &&
+          (retryAfter.get(ref) ?? 0) <= now
+      );
+      if (wanted.length === 0) return;
+      for (const ref of wanted) pending.add(ref);
+      void (async () => {
+        try {
+          const locations = await requestExternalAssetLocations(
+            parentOrigin,
+            wanted
+          );
+          const loaded: Record<string, Uint8Array> = {};
+          await Promise.all(
+            locations.map(async (location) => {
+              try {
+                loaded[location.ref] = await fetchVerifiedExternalAsset(
+                  location,
+                  abort.signal
+                );
+              } catch (error) {
+                retryAfter.set(location.ref, Date.now() + 5000);
+                console.warn(
+                  `[rhema-assets] failed to hydrate ${location.ref.slice(0, 12)}`,
+                  error
+                );
+              }
+            })
+          );
+          if (!abort.signal.aborted && Object.keys(loaded).length > 0) {
+            instance.loadImages(loaded);
+          }
+          const resolved = new Set(locations.map((item) => item.ref));
+          for (const ref of wanted) {
+            if (!resolved.has(ref)) retryAfter.set(ref, Date.now() + 5000);
+          }
+        } finally {
+          for (const ref of wanted) pending.delete(ref);
+        }
+      })();
+    };
+    return () => {
+      abort.abort();
+      instance.onUnresolvedImages = null;
+    };
+  }, [canvasReady, instance, parentOrigin, profile]);
 
   // Editor → host: ask for the operator's installed fonts, then keep them in a
   // ref + a family-name set (the latter tells the picker to render a local CSS

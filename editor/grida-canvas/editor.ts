@@ -57,6 +57,7 @@ import {
   type Op,
   type OpLog,
 } from "./sync";
+import { isHostManagedImageRef } from "./external-asset-policy";
 
 const __DEV__ = process.env.NODE_ENV === "development";
 
@@ -3408,6 +3409,11 @@ export class Editor
 
     for (const src of usedSrcs) {
       const ref = Editor.__parse_image_ref_from_src(src);
+      // CAS-backed resources are durable in the embedding host and recorded
+      // in the canonical document's external asset repository. Re-embedding
+      // the same bytes into every save would create an uncontrolled duplicate
+      // copy per document/version. They are hydrated ephemerally on open.
+      if (isHostManagedImageRef(snapshot, ref)) continue;
       const bytes = this.__get_image_bytes_for_wasm(src);
       if (!bytes) {
         throw new Error(
