@@ -2,13 +2,13 @@ import cg from "@grida/cg";
 import { compilerIO } from "@grida/io/compiler";
 import grida from "@grida/schema";
 
-export const NATIVE_COMPILER_VERSION = "1.0.0";
+export const NATIVE_COMPILER_VERSION = "1.1.0";
 export const GRIDA_IMPORT_DOCUMENT_VERSION = 1 as const;
 export const GRIDA_IMPORT_RANGE_UNIT = "utf16-code-units" as const;
 export const NATIVE_COMPILER_CONTRACT_DESCRIPTOR =
-  "GridaImportDocumentV1|scene,node(rectangle,ellipse,polygon,star,text,image)|utf16-code-units|sha256-assets|diagnostics-v1";
+  "GridaImportDocumentV1|scene,node(rectangle,ellipse,polygon,star,vector,text,image)|utf16-code-units|sha256-assets|diagnostics-v1";
 export const NATIVE_COMPILER_CONTRACT_HASH =
-  "e12a948161bc7d5125a3e5fa7393dc8496747aa58bc7b41e52b0ef9c5337b01a";
+  "56cf8e1f01415264e1a06f3387d82db713fe87f2a3fe0b957c49784a576262d3";
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const LIMITS = Object.freeze({
@@ -18,6 +18,7 @@ const LIMITS = Object.freeze({
   nodesPerScene: 20_000,
   textCodeUnits: 2_000_000,
   runsPerText: 50_000,
+  vectorPointsPerNode: 20_000,
   keyCodeUnits: 512,
   nameCodeUnits: 4096,
   stageDimension: 16_384,
@@ -56,6 +57,16 @@ export interface ImportFrameV1 {
   opacity?: number;
 }
 
+export interface ImportVectorNetworkV1 {
+  vertices: Array<{ x: number; y: number }>;
+  segments: Array<{
+    a: number;
+    b: number;
+    ta: { x: number; y: number };
+    tb: { x: number; y: number };
+  }>;
+}
+
 interface ImportNodeBaseV1 {
   importKey: string;
   name: string;
@@ -84,6 +95,10 @@ export type ImportNodeV1 =
       kind: "star";
       pointCount: number;
       innerRadius: number;
+    })
+  | (ImportShapeBaseV1 & {
+      kind: "vector";
+      network: ImportVectorNetworkV1;
     })
   | (ImportNodeBaseV1 & {
       kind: "text";
@@ -444,6 +459,71 @@ function validateRuns(node: Extract<ImportNodeV1, { kind: "text" }>): void {
   }
 }
 
+function vectorNetwork(node: Extract<ImportNodeV1, { kind: "vector" }>) {
+  const { vertices, segments } = node.network;
+  if (
+    vertices.length < 2 ||
+    vertices.length > LIMITS.vectorPointsPerNode ||
+    segments.length < 1 ||
+    segments.length > LIMITS.vectorPointsPerNode
+  ) {
+    fail(
+      "INVALID_VECTOR_NETWORK",
+      "vector network is empty or exceeds the compiler limit",
+      node.importKey
+    );
+  }
+  const outVertices = vertices.map(
+    (vertex) =>
+      [
+        bounded(
+          vertex.x,
+          -LIMITS.coordinateMagnitude,
+          LIMITS.coordinateMagnitude,
+          "vertex.x",
+          node.importKey
+        ),
+        bounded(
+          vertex.y,
+          -LIMITS.coordinateMagnitude,
+          LIMITS.coordinateMagnitude,
+          "vertex.y",
+          node.importKey
+        ),
+      ] as [number, number]
+  );
+  const outSegments = segments.map((segment) => {
+    if (
+      !Number.isSafeInteger(segment.a) ||
+      !Number.isSafeInteger(segment.b) ||
+      segment.a < 0 ||
+      segment.b < 0 ||
+      segment.a >= vertices.length ||
+      segment.b >= vertices.length ||
+      segment.a === segment.b
+    ) {
+      fail(
+        "INVALID_VECTOR_NETWORK",
+        "vector segment references an invalid vertex",
+        node.importKey
+      );
+    }
+    return {
+      a: segment.a,
+      b: segment.b,
+      ta: [
+        finite(segment.ta.x, "segment.ta.x", node.importKey),
+        finite(segment.ta.y, "segment.ta.y", node.importKey),
+      ] as [number, number],
+      tb: [
+        finite(segment.tb.x, "segment.tb.x", node.importKey),
+        finite(segment.tb.y, "segment.tb.y", node.importKey),
+      ] as [number, number],
+    };
+  });
+  return { vertices: outVertices, segments: outSegments };
+}
+
 async function compileNode(
   dto: GridaImportDocumentV1,
   sceneKey: string,
@@ -509,6 +589,13 @@ async function compileNode(
           node.importKey
         ),
       } as grida.program.nodes.RegularStarPolygonNode;
+    case "vector":
+      return {
+        type: "vector",
+        ...base,
+        ...shapeTraits(node),
+        vector_network: vectorNetwork(node),
+      } as grida.program.nodes.VectorNode;
     case "image": {
       const asset = assetByDigest.get(node.assetDigest);
       if (!asset || asset.kind !== "image") {

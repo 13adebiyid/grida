@@ -73,6 +73,27 @@ function fixture(): GridaImportDocumentV1 {
             frame: { x: 1000, y: 100, width: 500, height: 700 },
             assetDigest: "d".repeat(64),
           },
+          {
+            kind: "vector",
+            importKey: "custom-path",
+            name: "Custom path",
+            frame: { x: 40, y: 40, width: 200, height: 160 },
+            fill: red,
+            network: {
+              vertices: [
+                { x: 0, y: 0 },
+                { x: 200, y: 160 },
+              ],
+              segments: [
+                {
+                  a: 0,
+                  b: 1,
+                  ta: { x: 30, y: 0 },
+                  tb: { x: -30, y: 0 },
+                },
+              ],
+            },
+          },
         ],
       },
     ],
@@ -89,7 +110,13 @@ describe("native document compiler", () => {
     const unpacked = compilerIO.unpack(first.archive);
     const reopened = compilerIO.decode(unpacked.document);
     expect(Object.values(reopened.nodes).map((node) => node.type)).toEqual(
-      expect.arrayContaining(["scene", "container", "rectangle", "text"])
+      expect.arrayContaining([
+        "scene",
+        "container",
+        "rectangle",
+        "text",
+        "vector",
+      ])
     );
     expect(reopened.external_assets?.["d".repeat(64)]?.display_name).toBe(
       "Photo.png"
@@ -112,6 +139,16 @@ describe("native document compiler", () => {
     text.runs![1]!.start = 2;
     await expect(compileNativeDocument(badRuns)).rejects.toMatchObject({
       code: "INVALID_TEXT_RUNS",
+    });
+
+    const badVector = fixture();
+    const vector = badVector.scenes[0]!.nodes[3] as Extract<
+      (typeof badVector.scenes)[number]["nodes"][number],
+      { kind: "vector" }
+    >;
+    vector.network.segments[0]!.b = 99;
+    await expect(compileNativeDocument(badVector)).rejects.toMatchObject({
+      code: "INVALID_VECTOR_NETWORK",
     });
   });
 
