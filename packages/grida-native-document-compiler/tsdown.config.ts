@@ -10,6 +10,7 @@ export default defineConfig({
   dts: { eager: true },
   clean: true,
   alias: {
+    "@grida/animation": sibling("grida-animation"),
     "@grida/cg": sibling("grida-canvas-cg"),
     "@grida/color": sibling("grida-canvas-color"),
     "@grida/cmath": sibling("grida-cmath"),

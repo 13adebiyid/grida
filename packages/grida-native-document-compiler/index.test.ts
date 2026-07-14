@@ -117,6 +117,25 @@ function fixture(): GridaImportDocumentV1 {
         ],
       },
     ],
+    animations: [
+      {
+        importKey: "title-enter",
+        sceneImportKey: "slide-1",
+        targetNodeImportKey: "title",
+        phase: "enter",
+        trigger: "operator-advance",
+        dependsOnImportKeys: [],
+        order: 1,
+        delaySeconds: 0.1,
+        durationSeconds: 0.5,
+        easing: "ease-out",
+        fill: "forwards",
+        iterations: 1,
+        tracks: [{ property: "opacity", from: 0, to: 1 }],
+        mediaAction: "none",
+        mediaValue: 0,
+      },
+    ],
   };
 }
 
@@ -142,6 +161,15 @@ describe("native document compiler", () => {
     expect(reopened.external_assets?.["d".repeat(64)]?.display_name).toBe(
       "Photo.png"
     );
+    expect(Object.values(reopened.animations ?? {})).toEqual([
+      expect.objectContaining({
+        phase: "enter",
+        trigger: "operator-advance",
+        order: 1,
+        tracks: [{ property: "opacity", from: 0, to: 1 }],
+      }),
+    ]);
+    expect(first.sourceMap.animations["title-enter"]).toMatch(/^imp_/);
   });
 
   it("rejects invalid references and invalid rich-text ranges", async () => {
@@ -180,6 +208,13 @@ describe("native document compiler", () => {
     video.trimEndSeconds = 0.5;
     await expect(compileNativeDocument(badTrim)).rejects.toMatchObject({
       code: "INVALID_VIDEO_TRIM",
+    });
+
+    const badAnimation = fixture();
+    badAnimation.animations![0]!.targetNodeImportKey = "missing";
+    await expect(compileNativeDocument(badAnimation)).rejects.toMatchObject({
+      code: "ANIMATION_TARGET_MISSING",
+      entityImportKey: "title-enter",
     });
   });
 

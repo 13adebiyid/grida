@@ -1083,6 +1083,9 @@ importers:
 
   packages/grida-native-document-compiler:
     dependencies:
+      '@grida/animation':
+        specifier: workspace:*
+        version: link:../grida-animation
       '@grida/cg':
         specifier: workspace:*
         version: link:../grida-canvas-cg

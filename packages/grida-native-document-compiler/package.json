@@ -1,6 +1,6 @@
 {
   "name": "@grida/native-document-compiler",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": false,
   "description": "Deterministic source-neutral compiler for native Grida documents",
   "license": "MIT",
@@ -22,6 +22,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@grida/animation": "workspace:*",
     "@grida/cg": "workspace:*",
     "@grida/format": "workspace:*",
     "@grida/io": "workspace:*",

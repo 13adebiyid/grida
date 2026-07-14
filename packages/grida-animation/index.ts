@@ -27,6 +27,11 @@ export interface AnimationValidationIssue {
   message: string;
 }
 
+export interface AnimationValidationDocument {
+  nodes: Record<string, { type: string }>;
+  animations?: Repository;
+}
+
 export interface LogicalAnimationClock {
   sceneId: string;
   sceneVersion: number;
@@ -51,7 +56,7 @@ export interface AnimationSample {
 }
 
 export function validateAnimationRepository(
-  document: Pick<grida.program.document.Document, "nodes" | "animations">
+  document: AnimationValidationDocument
 ): AnimationValidationIssue[] {
   const repository = document.animations ?? {};
   const clips = Object.values(repository);

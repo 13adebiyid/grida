@@ -1,20 +1,22 @@
 import cg from "@grida/cg";
 import { compilerIO } from "@grida/io/compiler";
 import grida from "@grida/schema";
+import { validateAnimationRepository } from "../grida-animation";
 
-export const NATIVE_COMPILER_VERSION = "1.2.0";
+export const NATIVE_COMPILER_VERSION = "1.3.0";
 export const GRIDA_IMPORT_DOCUMENT_VERSION = 1 as const;
 export const GRIDA_IMPORT_RANGE_UNIT = "utf16-code-units" as const;
 export const NATIVE_COMPILER_CONTRACT_DESCRIPTOR =
-  "GridaImportDocumentV1|scene,node(rectangle,ellipse,polygon,star,vector,text,image,video)|utf16-code-units|sha256-assets|diagnostics-v1";
+  "GridaImportDocumentV1|scene,node(rectangle,ellipse,polygon,star,vector,text,image,video),animation-v1|utf16-code-units|sha256-assets|diagnostics-v1";
 export const NATIVE_COMPILER_CONTRACT_HASH =
-  "8eea3d0d6c65be75dbfc59c7f0decfdddc666d7696f7c9c02e6b593bf6beeac5";
+  "5e01862b8eae2003f35088cb0536bb1e5d7579a149e75ba8548a8675982f3304";
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const LIMITS = Object.freeze({
   scenes: 4096,
   nodes: 100_000,
   assets: 10_000,
+  animations: 10_000,
   nodesPerScene: 20_000,
   textCodeUnits: 2_000_000,
   runsPerText: 50_000,
@@ -153,6 +155,29 @@ export interface ImportDiagnosticV1 {
   message: string;
 }
 
+export interface ImportAnimationV1 {
+  importKey: string;
+  sceneImportKey: string;
+  targetNodeImportKey?: string;
+  phase: grida.program.document.animation.Phase;
+  trigger: grida.program.document.animation.Trigger;
+  dependsOnImportKeys: string[];
+  order: number;
+  delaySeconds: number;
+  durationSeconds: number;
+  easing: grida.program.document.animation.Easing;
+  fill: grida.program.document.animation.Fill;
+  iterations: number;
+  tracks: Array<{
+    property: grida.program.document.animation.Property;
+    from: number;
+    to: number;
+  }>;
+  mediaAction: grida.program.document.animation.MediaAction;
+  mediaValue: number;
+  cueId?: string;
+}
+
 export interface GridaImportDocumentV1 {
   version: typeof GRIDA_IMPORT_DOCUMENT_VERSION;
   rangeUnit: typeof GRIDA_IMPORT_RANGE_UNIT;
@@ -166,6 +191,7 @@ export interface GridaImportDocumentV1 {
     background?: ImportPaintV1;
     nodes: ImportNodeV1[];
   }>;
+  animations?: ImportAnimationV1[];
   diagnostics?: ImportDiagnosticV1[];
 }
 
@@ -175,6 +201,7 @@ export interface NativeSourceMapV1 {
   scenes: Record<string, string>;
   nodes: Record<string, string>;
   assets: Record<string, string>;
+  animations: Record<string, string>;
 }
 
 export interface NativeCompileResult {
@@ -815,6 +842,12 @@ export async function compileNativeDocument(
       "document asset count exceeds the compiler limit",
       dto.importKey
     );
+  if ((dto.animations?.length ?? 0) > LIMITS.animations)
+    fail(
+      "ANIMATION_LIMIT_EXCEEDED",
+      "document animation count exceeds the compiler limit",
+      dto.importKey
+    );
   const totalNodes = dto.scenes.reduce(
     (sum, scene) => sum + scene.nodes.length,
     0
@@ -832,6 +865,7 @@ export async function compileNativeDocument(
     scenes: {},
     nodes: {},
     assets: {},
+    animations: {},
   };
   const externalAssets: NonNullable<
     grida.program.document.Document["external_assets"]
@@ -867,7 +901,8 @@ export async function compileNativeDocument(
   const scenesRef: string[] = [];
   const sceneKeys = new Set<string>();
   const nodeScopedKeys = new Set<string>();
-  const totalWork = totalNodes + dto.scenes.length;
+  const totalWork =
+    totalNodes + dto.scenes.length + (dto.animations?.length ?? 0);
   let completed = 0;
 
   for (const sceneDto of dto.scenes) {
@@ -979,6 +1014,131 @@ export async function compileNativeDocument(
     }
   }
 
+  const animations: grida.program.document.animation.Repository = {};
+  const animationByImportKey = new Map<string, string>();
+  for (const animation of dto.animations ?? []) {
+    checkAbort(options.signal);
+    assertString(
+      animation.importKey,
+      "animation.importKey",
+      animation.importKey
+    );
+    assertString(
+      animation.sceneImportKey,
+      "animation.sceneImportKey",
+      animation.importKey
+    );
+    if (animationByImportKey.has(animation.importKey)) {
+      fail(
+        "DUPLICATE_IMPORT_KEY",
+        "animation import keys must be unique",
+        animation.importKey
+      );
+    }
+    const id = await nativeId(
+      `${dto.importKey}/animation`,
+      animation.importKey
+    );
+    animationByImportKey.set(animation.importKey, id);
+    sourceMap.animations[animation.importKey] = id;
+  }
+  for (const animation of dto.animations ?? []) {
+    checkAbort(options.signal);
+    const id = animationByImportKey.get(animation.importKey)!;
+    const sceneId = sourceMap.scenes[animation.sceneImportKey];
+    if (!sceneId) {
+      fail(
+        "ANIMATION_SCENE_MISSING",
+        "animation references a missing scene import key",
+        animation.importKey
+      );
+    }
+    const targetNodeId = animation.targetNodeImportKey
+      ? sourceMap.nodes[
+          `${animation.sceneImportKey}/${animation.targetNodeImportKey}`
+        ]
+      : undefined;
+    if (animation.targetNodeImportKey && !targetNodeId) {
+      fail(
+        "ANIMATION_TARGET_MISSING",
+        "animation references a missing node import key",
+        animation.importKey
+      );
+    }
+    const dependencyIds = animation.dependsOnImportKeys.map((dependency) => {
+      const dependencyId = animationByImportKey.get(dependency);
+      if (!dependencyId) {
+        fail(
+          "ANIMATION_DEPENDENCY_MISSING",
+          `animation dependency '${dependency}' is missing`,
+          animation.importKey
+        );
+      }
+      return dependencyId;
+    });
+    const order = bounded(
+      animation.order,
+      0,
+      1_000_000,
+      "animation.order",
+      animation.importKey
+    );
+    const iterations = bounded(
+      animation.iterations,
+      1,
+      10_000,
+      "animation.iterations",
+      animation.importKey
+    );
+    if (!Number.isSafeInteger(order) || !Number.isSafeInteger(iterations)) {
+      fail(
+        "ANIMATION_NUMBER_INVALID",
+        "animation order and iterations must be integers",
+        animation.importKey
+      );
+    }
+    animations[id] = {
+      id,
+      scene_id: sceneId,
+      ...(targetNodeId ? { target_node_id: targetNodeId } : {}),
+      phase: animation.phase,
+      trigger: animation.trigger,
+      depends_on: dependencyIds,
+      order,
+      delay_seconds: bounded(
+        animation.delaySeconds,
+        0,
+        86_400,
+        "animation.delaySeconds",
+        animation.importKey
+      ),
+      duration_seconds: bounded(
+        animation.durationSeconds,
+        0,
+        86_400,
+        "animation.durationSeconds",
+        animation.importKey
+      ),
+      easing: animation.easing,
+      fill: animation.fill,
+      iterations,
+      tracks: animation.tracks.map((track) => ({
+        property: track.property,
+        from: finite(track.from, "animation.track.from", animation.importKey),
+        to: finite(track.to, "animation.track.to", animation.importKey),
+      })),
+      media_action: animation.mediaAction,
+      media_value: finite(
+        animation.mediaValue,
+        "animation.mediaValue",
+        animation.importKey
+      ),
+      ...(animation.cueId ? { cue_id: animation.cueId } : {}),
+    };
+    completed += 1;
+    options.onProgress?.({ completed, total: totalWork });
+  }
+
   const draftDocument: grida.program.document.Document = {
     scenes_ref: scenesRef,
     entry_scene_id: scenesRef[0],
@@ -988,8 +1148,20 @@ export async function compileNativeDocument(
     bitmaps: {},
     properties: {},
     external_assets: externalAssets,
+    animations,
     minimum_reader_version: grida.program.document.SCHEMA_VERSION,
   };
+  const animationIssues = validateAnimationRepository(draftDocument);
+  if (animationIssues.length > 0) {
+    const issue = animationIssues[0]!;
+    fail(
+      issue.code,
+      issue.message,
+      Object.entries(sourceMap.animations).find(
+        ([, nativeAnimationId]) => nativeAnimationId === issue.clipId
+      )?.[0]
+    );
+  }
   // FlatBuffers stores several graphics scalars as f32 and fills in explicit
   // codec defaults. Make the production codec's reopened form canonical so
   // the archive and JSON snapshot can never disagree about those values.
