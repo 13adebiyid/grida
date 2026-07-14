@@ -1,0 +1,27 @@
+{
+  "name": "@grida/animation",
+  "version": "1.0.0",
+  "private": false,
+  "description": "Deterministic logical-clock animation evaluator for Grida documents",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@grida/schema": "workspace:*"
+  }
+}
