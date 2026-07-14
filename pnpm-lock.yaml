@@ -1017,6 +1017,12 @@ importers:
         specifier: workspace:*
         version: link:../grida-canvas-color
 
+  packages/grida-animation:
+    dependencies:
+      '@grida/schema':
+        specifier: workspace:*
+        version: link:../grida-canvas-schema
+
   packages/grida-canvas-color: {}
 
   packages/grida-canvas-hud:
