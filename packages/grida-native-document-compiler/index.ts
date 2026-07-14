@@ -3,13 +3,13 @@ import { compilerIO } from "@grida/io/compiler";
 import grida from "@grida/schema";
 import { validateAnimationRepository } from "../grida-animation";
 
-export const NATIVE_COMPILER_VERSION = "1.3.0";
+export const NATIVE_COMPILER_VERSION = "1.4.0";
 export const GRIDA_IMPORT_DOCUMENT_VERSION = 1 as const;
 export const GRIDA_IMPORT_RANGE_UNIT = "utf16-code-units" as const;
 export const NATIVE_COMPILER_CONTRACT_DESCRIPTOR =
-  "GridaImportDocumentV1|scene,node(rectangle,ellipse,polygon,star,vector,text,image,video),animation-v1|utf16-code-units|sha256-assets|diagnostics-v1";
+  "GridaImportDocumentV1|scene,node(rectangle,ellipse,polygon,star,vector,text,image,video),animation-v1|utf16-code-units|sha256-assets|diagnostics-v1|merge-repack-v1";
 export const NATIVE_COMPILER_CONTRACT_HASH =
-  "5e01862b8eae2003f35088cb0536bb1e5d7579a149e75ba8548a8675982f3304";
+  "016dc39b150a657b7a7833c01b3b2fee2255c376b68ad2a1a734867b47a37131";
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const LIMITS = Object.freeze({
@@ -221,6 +221,13 @@ export interface NativeCompileResult {
 export interface NativeCompileOptions {
   signal?: AbortSignal;
   onProgress?: (progress: { completed: number; total: number }) => void;
+}
+
+export interface NativeRepackResult extends Omit<
+  NativeCompileResult,
+  "sourceMap"
+> {
+  sourceMap: Record<string, unknown>;
 }
 
 export class NativeDocumentCompileError extends Error {
@@ -1194,6 +1201,69 @@ export async function compileNativeDocument(
     diagnostics: [...(dto.diagnostics ?? [])],
     semanticHash,
     archiveHash,
+    schemaVersion: grida.program.document.SCHEMA_VERSION,
+    minimumReaderVersion: grida.program.document.SCHEMA_VERSION,
+    compilerVersion: NATIVE_COMPILER_VERSION,
+    contractHash: NATIVE_COMPILER_CONTRACT_HASH,
+  };
+}
+
+/** Rebuild an editor archive from a three-way-merged canonical snapshot.
+ * Embedded operator assets are copied from prior trusted Grida archives;
+ * document bytes and the JSON sidecar are always regenerated together. */
+export async function repackNativeDocument(input: {
+  snapshotJson: string;
+  sourceMap: object;
+  diagnostics?: ImportDiagnosticV1[];
+  assetArchives?: readonly Uint8Array[];
+}): Promise<NativeRepackResult> {
+  if (!input.sourceMap || Array.isArray(input.sourceMap)) {
+    fail("INVALID_SOURCE_MAP", "repack source map is missing");
+  }
+  const archives = input.assetArchives ?? [];
+  const totalArchiveBytes = archives.reduce((sum, archive) => {
+    if (!(archive instanceof Uint8Array) || archive.byteLength === 0) {
+      fail("INVALID_ASSET_ARCHIVE", "repack asset archive is invalid");
+    }
+    return sum + archive.byteLength;
+  }, 0);
+  if (totalArchiveBytes > LIMITS.assetBytes) {
+    fail(
+      "ASSET_ARCHIVE_LIMIT",
+      "repack asset archives exceed the compiler limit"
+    );
+  }
+  let repacked: ReturnType<typeof compilerIO.repack>;
+  try {
+    repacked = compilerIO.repack(input.snapshotJson, archives);
+  } catch (error) {
+    fail(
+      "REPACK_FAILED",
+      error instanceof Error ? error.message : "native document repack failed"
+    );
+  }
+  const animationIssues = validateAnimationRepository(repacked.document);
+  if (animationIssues.length > 0) {
+    const issue = animationIssues[0]!;
+    fail(issue.code, issue.message);
+  }
+  const semanticHash = await sha256(stableStringify(repacked.document));
+  const reopened = compilerIO.unpack(repacked.archive);
+  const decoded = compilerIO.decode(reopened.document);
+  if ((await sha256(stableStringify(decoded))) !== semanticHash) {
+    fail(
+      "CODEC_ROUNDTRIP_MISMATCH",
+      "repacked document changed after production codec round-trip"
+    );
+  }
+  return {
+    document: repacked.document,
+    archive: repacked.archive,
+    snapshotJson: repacked.snapshotJson,
+    sourceMap: { ...input.sourceMap },
+    diagnostics: [...(input.diagnostics ?? [])],
+    semanticHash,
+    archiveHash: await sha256(repacked.archive),
     schemaVersion: grida.program.document.SCHEMA_VERSION,
     minimumReaderVersion: grida.program.document.SCHEMA_VERSION,
     compilerVersion: NATIVE_COMPILER_VERSION,

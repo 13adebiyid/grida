@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { compilerIO } from "@grida/io/compiler";
+import { io } from "@grida/io";
 import {
   compileNativeDocument,
   NATIVE_COMPILER_CONTRACT_DESCRIPTOR,
   NATIVE_COMPILER_CONTRACT_HASH,
+  repackNativeDocument,
   type GridaImportDocumentV1,
 } from "./index";
 
@@ -216,6 +218,37 @@ describe("native document compiler", () => {
       code: "ANIMATION_TARGET_MISSING",
       entityImportKey: "title-enter",
     });
+  });
+
+  it("repacks a merged snapshot with matching binary data and embedded assets", async () => {
+    const compiled = await compileNativeDocument(fixture());
+    const snapshot = JSON.parse(compiled.snapshotJson) as {
+      document: { nodes: Record<string, { type: string; text?: string }> };
+    };
+    const text = Object.values(snapshot.document.nodes).find(
+      (node) => node.type === "text"
+    );
+    expect(text).toBeDefined();
+    text!.text = "Operator + source merge";
+    const embedded = new Uint8Array([1, 2, 3, 4]);
+    const repacked = await repackNativeDocument({
+      snapshotJson: JSON.stringify(snapshot),
+      sourceMap: compiled.sourceMap,
+      assetArchives: [
+        io.archive.pack(compiled.document, { "operator.png": embedded }),
+      ],
+    });
+    const reopened = compilerIO.unpack(repacked.archive);
+    const document = compilerIO.decode(reopened.document);
+    expect(
+      Object.values(document.nodes).find((node) => node.type === "text")
+    ).toMatchObject({ text: "Operator + source merge" });
+    expect(io.archive.unpack(repacked.archive).images["operator.png"]).toEqual(
+      embedded
+    );
+    expect(JSON.parse(repacked.snapshotJson).document).toEqual(
+      JSON.parse(compilerIO.snapshot(document)).document
+    );
   });
 
   it("honors cancellation and locks the published contract descriptor", async () => {
