@@ -1075,6 +1075,27 @@ importers:
         specifier: workspace:*
         version: link:../grida-canvas-vn
 
+  packages/grida-native-document-compiler:
+    dependencies:
+      '@grida/cg':
+        specifier: workspace:*
+        version: link:../grida-canvas-cg
+      '@grida/format':
+        specifier: workspace:*
+        version: link:../grida-format
+      '@grida/io':
+        specifier: workspace:*
+        version: link:../grida-canvas-io
+      '@grida/schema':
+        specifier: workspace:*
+        version: link:../grida-canvas-schema
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.2
+      flatbuffers:
+        specifier: ^25.9.23
+        version: 25.9.23
+
   packages/grida-canvas-io-figma:
     dependencies:
       '@grida/cmath':

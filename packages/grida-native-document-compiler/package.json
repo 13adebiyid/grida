@@ -1,0 +1,32 @@
+{
+  "name": "@grida/native-document-compiler",
+  "version": "1.0.0",
+  "private": false,
+  "description": "Deterministic source-neutral compiler for native Grida documents",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@grida/cg": "workspace:*",
+    "@grida/format": "workspace:*",
+    "@grida/io": "workspace:*",
+    "@grida/schema": "workspace:*",
+    "fflate": "^0.8.2",
+    "flatbuffers": "^25.9.23"
+  }
+}
