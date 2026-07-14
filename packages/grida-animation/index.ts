@@ -1,6 +1,6 @@
 import type grida from "../grida-canvas-schema";
 
-export const ANIMATION_EVALUATOR_VERSION = "1.0.0";
+export const ANIMATION_EVALUATOR_VERSION = "1.0.1";
 export const MAX_ANIMATION_CLIPS = 10_000;
 export const MAX_DEPENDENCIES_PER_CLIP = 64;
 export const MAX_TRACKS_PER_CLIP = 32;
