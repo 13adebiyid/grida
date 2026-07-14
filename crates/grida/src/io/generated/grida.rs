@@ -4003,6 +4003,108 @@ impl<'a> ::flatbuffers::Verifiable for Node {
 impl ::flatbuffers::SimpleToVerifyInSlice for Node {}
 pub struct NodeUnionTableOffset {}
 
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_EXTERNAL_ASSET_KIND: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_EXTERNAL_ASSET_KIND: u8 = 4;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_EXTERNAL_ASSET_KIND: [ExternalAssetKind; 5] = [
+  ExternalAssetKind::Unknown,
+  ExternalAssetKind::Image,
+  ExternalAssetKind::Video,
+  ExternalAssetKind::Audio,
+  ExternalAssetKind::Other,
+];
+
+/// A durable reference to bytes owned by an external content-addressed store.
+///
+/// The document records identity and rendering metadata, but the archive does
+/// not duplicate the payload. Runtime hosts resolve `digest` through their
+/// trusted asset provider and register the bytes under `res://images/<digest>`
+/// (or the equivalent media resource namespace).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct ExternalAssetKind(pub u8);
+#[allow(non_upper_case_globals)]
+impl ExternalAssetKind {
+  pub const Unknown: Self = Self(0);
+  pub const Image: Self = Self(1);
+  pub const Video: Self = Self(2);
+  pub const Audio: Self = Self(3);
+  pub const Other: Self = Self(4);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 4;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::Unknown,
+    Self::Image,
+    Self::Video,
+    Self::Audio,
+    Self::Other,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::Unknown => Some("Unknown"),
+      Self::Image => Some("Image"),
+      Self::Video => Some("Video"),
+      Self::Audio => Some("Audio"),
+      Self::Other => Some("Other"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for ExternalAssetKind {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for ExternalAssetKind {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for ExternalAssetKind {
+    type Output = ExternalAssetKind;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for ExternalAssetKind {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for ExternalAssetKind {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for ExternalAssetKind {}
 /// Rust: `CGPoint { x: f32, y: f32 }`
 // struct CGPoint, aligned to 4
 #[repr(transparent)]
@@ -19927,6 +20029,240 @@ impl ::core::fmt::Debug for NodeSlot<'_> {
       ds.finish()
   }
 }
+pub enum ExternalAssetOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ExternalAsset<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ExternalAsset<'a> {
+  type Inner = ExternalAsset<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ExternalAsset<'a> {
+  pub const VT_DIGEST: ::flatbuffers::VOffsetT = 4;
+  pub const VT_KIND: ::flatbuffers::VOffsetT = 6;
+  pub const VT_MIME_TYPE: ::flatbuffers::VOffsetT = 8;
+  pub const VT_DISPLAY_NAME: ::flatbuffers::VOffsetT = 10;
+  pub const VT_BYTES: ::flatbuffers::VOffsetT = 12;
+  pub const VT_WIDTH: ::flatbuffers::VOffsetT = 14;
+  pub const VT_HEIGHT: ::flatbuffers::VOffsetT = 16;
+  pub const VT_DURATION_SECONDS: ::flatbuffers::VOffsetT = 18;
+  pub const VT_POSTER_DIGEST: ::flatbuffers::VOffsetT = 20;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ExternalAsset { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ExternalAssetArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ExternalAsset<'bldr>> {
+    let mut builder = ExternalAssetBuilder::new(_fbb);
+    builder.add_duration_seconds(args.duration_seconds);
+    builder.add_bytes(args.bytes);
+    if let Some(x) = args.poster_digest { builder.add_poster_digest(x); }
+    builder.add_height(args.height);
+    builder.add_width(args.width);
+    if let Some(x) = args.display_name { builder.add_display_name(x); }
+    if let Some(x) = args.mime_type { builder.add_mime_type(x); }
+    if let Some(x) = args.digest { builder.add_digest(x); }
+    builder.add_kind(args.kind);
+    builder.finish()
+  }
+
+
+  /// Lowercase SHA-256 hex digest. This is also the repository key.
+  #[inline]
+  pub fn digest(&self) -> &'a str {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ExternalAsset::VT_DIGEST, None).unwrap()}
+  }
+  #[inline]
+  pub fn kind(&self) -> ExternalAssetKind {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<ExternalAssetKind>(ExternalAsset::VT_KIND, Some(ExternalAssetKind::Unknown)).unwrap()}
+  }
+  #[inline]
+  pub fn mime_type(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ExternalAsset::VT_MIME_TYPE, None)}
+  }
+  #[inline]
+  pub fn display_name(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ExternalAsset::VT_DISPLAY_NAME, None)}
+  }
+  #[inline]
+  pub fn bytes(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ExternalAsset::VT_BYTES, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn width(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(ExternalAsset::VT_WIDTH, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn height(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(ExternalAsset::VT_HEIGHT, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn duration_seconds(&self) -> f64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(ExternalAsset::VT_DURATION_SECONDS, Some(-1.0)).unwrap()}
+  }
+  #[inline]
+  pub fn poster_digest(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ExternalAsset::VT_POSTER_DIGEST, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ExternalAsset<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("digest", Self::VT_DIGEST, true)?
+     .visit_field::<ExternalAssetKind>("kind", Self::VT_KIND, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("mime_type", Self::VT_MIME_TYPE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("display_name", Self::VT_DISPLAY_NAME, false)?
+     .visit_field::<u64>("bytes", Self::VT_BYTES, false)?
+     .visit_field::<u32>("width", Self::VT_WIDTH, false)?
+     .visit_field::<u32>("height", Self::VT_HEIGHT, false)?
+     .visit_field::<f64>("duration_seconds", Self::VT_DURATION_SECONDS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("poster_digest", Self::VT_POSTER_DIGEST, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ExternalAssetArgs<'a> {
+    pub digest: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub kind: ExternalAssetKind,
+    pub mime_type: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub display_name: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub bytes: u64,
+    pub width: u32,
+    pub height: u32,
+    pub duration_seconds: f64,
+    pub poster_digest: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for ExternalAssetArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ExternalAssetArgs {
+      digest: None, // required field
+      kind: ExternalAssetKind::Unknown,
+      mime_type: None,
+      display_name: None,
+      bytes: 0,
+      width: 0,
+      height: 0,
+      duration_seconds: -1.0,
+      poster_digest: None,
+    }
+  }
+}
+
+pub struct ExternalAssetBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ExternalAssetBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_digest(&mut self, digest: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ExternalAsset::VT_DIGEST, digest);
+  }
+  #[inline]
+  pub fn add_kind(&mut self, kind: ExternalAssetKind) {
+    self.fbb_.push_slot::<ExternalAssetKind>(ExternalAsset::VT_KIND, kind, ExternalAssetKind::Unknown);
+  }
+  #[inline]
+  pub fn add_mime_type(&mut self, mime_type: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ExternalAsset::VT_MIME_TYPE, mime_type);
+  }
+  #[inline]
+  pub fn add_display_name(&mut self, display_name: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ExternalAsset::VT_DISPLAY_NAME, display_name);
+  }
+  #[inline]
+  pub fn add_bytes(&mut self, bytes: u64) {
+    self.fbb_.push_slot::<u64>(ExternalAsset::VT_BYTES, bytes, 0);
+  }
+  #[inline]
+  pub fn add_width(&mut self, width: u32) {
+    self.fbb_.push_slot::<u32>(ExternalAsset::VT_WIDTH, width, 0);
+  }
+  #[inline]
+  pub fn add_height(&mut self, height: u32) {
+    self.fbb_.push_slot::<u32>(ExternalAsset::VT_HEIGHT, height, 0);
+  }
+  #[inline]
+  pub fn add_duration_seconds(&mut self, duration_seconds: f64) {
+    self.fbb_.push_slot::<f64>(ExternalAsset::VT_DURATION_SECONDS, duration_seconds, -1.0);
+  }
+  #[inline]
+  pub fn add_poster_digest(&mut self, poster_digest: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ExternalAsset::VT_POSTER_DIGEST, poster_digest);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ExternalAssetBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ExternalAssetBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ExternalAsset<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    self.fbb_.required(o, ExternalAsset::VT_DIGEST,"digest");
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ExternalAsset<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ExternalAsset");
+      ds.field("digest", &self.digest());
+      ds.field("kind", &self.kind());
+      ds.field("mime_type", &self.mime_type());
+      ds.field("display_name", &self.display_name());
+      ds.field("bytes", &self.bytes());
+      ds.field("width", &self.width());
+      ds.field("height", &self.height());
+      ds.field("duration_seconds", &self.duration_seconds());
+      ds.field("poster_digest", &self.poster_digest());
+      ds.finish()
+  }
+}
 pub enum CanvasDocumentOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -19946,6 +20282,8 @@ impl<'a> CanvasDocument<'a> {
   pub const VT_SCHEMA_VERSION: ::flatbuffers::VOffsetT = 4;
   pub const VT_NODES: ::flatbuffers::VOffsetT = 6;
   pub const VT_SCENES: ::flatbuffers::VOffsetT = 8;
+  pub const VT_EXTERNAL_ASSETS: ::flatbuffers::VOffsetT = 10;
+  pub const VT_MINIMUM_READER_VERSION: ::flatbuffers::VOffsetT = 12;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -19957,6 +20295,8 @@ impl<'a> CanvasDocument<'a> {
     args: &'args CanvasDocumentArgs<'args>
   ) -> ::flatbuffers::WIPOffset<CanvasDocument<'bldr>> {
     let mut builder = CanvasDocumentBuilder::new(_fbb);
+    if let Some(x) = args.minimum_reader_version { builder.add_minimum_reader_version(x); }
+    if let Some(x) = args.external_assets { builder.add_external_assets(x); }
     if let Some(x) = args.scenes { builder.add_scenes(x); }
     if let Some(x) = args.nodes { builder.add_nodes(x); }
     if let Some(x) = args.schema_version { builder.add_schema_version(x); }
@@ -19992,6 +20332,24 @@ impl<'a> CanvasDocument<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<NodeIdentifier>>>>(CanvasDocument::VT_SCENES, None)}
   }
+  /// Content-addressed assets resolved by the embedding host. Entries are
+  /// sorted by digest by deterministic writers.
+  #[inline]
+  pub fn external_assets(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ExternalAsset<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ExternalAsset>>>>(CanvasDocument::VT_EXTERNAL_ASSETS, None)}
+  }
+  /// Old readers compare this with their supported schema and open the
+  /// document read-only when they cannot safely preserve it.
+  #[inline]
+  pub fn minimum_reader_version(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(CanvasDocument::VT_MINIMUM_READER_VERSION, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for CanvasDocument<'_> {
@@ -20003,6 +20361,8 @@ impl ::flatbuffers::Verifiable for CanvasDocument<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("schema_version", Self::VT_SCHEMA_VERSION, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<NodeSlot>>>>("nodes", Self::VT_NODES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<NodeIdentifier>>>>("scenes", Self::VT_SCENES, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ExternalAsset>>>>("external_assets", Self::VT_EXTERNAL_ASSETS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("minimum_reader_version", Self::VT_MINIMUM_READER_VERSION, false)?
      .finish();
     Ok(())
   }
@@ -20011,6 +20371,8 @@ pub struct CanvasDocumentArgs<'a> {
     pub schema_version: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub nodes: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<NodeSlot<'a>>>>>,
     pub scenes: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<NodeIdentifier<'a>>>>>,
+    pub external_assets: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ExternalAsset<'a>>>>>,
+    pub minimum_reader_version: Option<::flatbuffers::WIPOffset<&'a str>>,
 }
 impl<'a> Default for CanvasDocumentArgs<'a> {
   #[inline]
@@ -20019,6 +20381,8 @@ impl<'a> Default for CanvasDocumentArgs<'a> {
       schema_version: None,
       nodes: None,
       scenes: None,
+      external_assets: None,
+      minimum_reader_version: None,
     }
   }
 }
@@ -20041,6 +20405,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> CanvasDocumentBuilder<'a, 'b,
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(CanvasDocument::VT_SCENES, scenes);
   }
   #[inline]
+  pub fn add_external_assets(&mut self, external_assets: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<ExternalAsset<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(CanvasDocument::VT_EXTERNAL_ASSETS, external_assets);
+  }
+  #[inline]
+  pub fn add_minimum_reader_version(&mut self, minimum_reader_version: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(CanvasDocument::VT_MINIMUM_READER_VERSION, minimum_reader_version);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> CanvasDocumentBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     CanvasDocumentBuilder {
@@ -20061,6 +20433,8 @@ impl ::core::fmt::Debug for CanvasDocument<'_> {
       ds.field("schema_version", &self.schema_version());
       ds.field("nodes", &self.nodes());
       ds.field("scenes", &self.scenes());
+      ds.field("external_assets", &self.external_assets());
+      ds.field("minimum_reader_version", &self.minimum_reader_version());
       ds.finish()
   }
 }

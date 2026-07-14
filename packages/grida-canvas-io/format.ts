@@ -5314,11 +5314,66 @@ export namespace format {
           fbs.CanvasDocument.createScenesVector
         );
 
+        // External assets are content-addressed and therefore deterministic by
+        // digest. The payload bytes live in the embedding host's CAS, not in
+        // this FlatBuffer/archive.
+        const externalAssetOffsets = Object.entries(
+          document.external_assets ?? {}
+        )
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, asset]) => {
+            const digest = asset.digest || key;
+            const digestOffset = builder.createString(digest);
+            const mimeOffset = builder.createString(asset.mime_type || "");
+            const nameOffset = builder.createString(asset.display_name || "");
+            const posterOffset = asset.poster_digest
+              ? builder.createString(asset.poster_digest)
+              : 0;
+            const kind =
+              asset.kind === "image"
+                ? fbs.ExternalAssetKind.Image
+                : asset.kind === "video"
+                  ? fbs.ExternalAssetKind.Video
+                  : asset.kind === "audio"
+                    ? fbs.ExternalAssetKind.Audio
+                    : fbs.ExternalAssetKind.Other;
+            return fbs.ExternalAsset.createExternalAsset(
+              builder,
+              digestOffset,
+              kind,
+              mimeOffset,
+              nameOffset,
+              BigInt(Math.max(0, Math.trunc(asset.bytes))),
+              Math.max(0, Math.trunc(asset.width ?? 0)),
+              Math.max(0, Math.trunc(asset.height ?? 0)),
+              asset.duration_seconds ?? -1,
+              posterOffset
+            );
+          });
+        const externalAssetsOffset = externalAssetOffsets.length
+          ? fbs.CanvasDocument.createExternalAssetsVector(
+              builder,
+              externalAssetOffsets
+            )
+          : 0;
+        const minimumReaderVersionOffset = document.minimum_reader_version
+          ? builder.createString(document.minimum_reader_version)
+          : 0;
+
         // Build CanvasDocument table
         fbs.CanvasDocument.startCanvasDocument(builder);
         fbs.CanvasDocument.addSchemaVersion(builder, schemaVersionOffset);
         fbs.CanvasDocument.addNodes(builder, nodesOffset);
         fbs.CanvasDocument.addScenes(builder, scenesOffset);
+        if (externalAssetsOffset) {
+          fbs.CanvasDocument.addExternalAssets(builder, externalAssetsOffset);
+        }
+        if (minimumReaderVersionOffset) {
+          fbs.CanvasDocument.addMinimumReaderVersion(
+            builder,
+            minimumReaderVersionOffset
+          );
+        }
         const documentOffset = fbs.CanvasDocument.endCanvasDocument(builder);
 
         // Build GridaFile root
@@ -7112,6 +7167,42 @@ export namespace format {
           }
         }
 
+        const externalAssets: Record<
+          string,
+          grida.program.document.ExternalAssetRef
+        > = {};
+        for (let i = 0; i < document.externalAssetsLength(); i++) {
+          const asset = document.externalAssets(i);
+          if (!asset) continue;
+          const digest = asset.digest();
+          if (!digest) continue;
+          const kind =
+            asset.kind() === fbs.ExternalAssetKind.Image
+              ? "image"
+              : asset.kind() === fbs.ExternalAssetKind.Video
+                ? "video"
+                : asset.kind() === fbs.ExternalAssetKind.Audio
+                  ? "audio"
+                  : "other";
+          externalAssets[digest] = {
+            digest,
+            kind,
+            mime_type: asset.mimeType() ?? "application/octet-stream",
+            display_name: asset.displayName() ?? "",
+            bytes: Number(asset.bytes()),
+            ...(asset.width() > 0 ? { width: asset.width() } : {}),
+            ...(asset.height() > 0 ? { height: asset.height() } : {}),
+            ...(asset.durationSeconds() >= 0
+              ? { duration_seconds: asset.durationSeconds() }
+              : {}),
+            ...(asset.posterDigest()
+              ? { poster_digest: asset.posterDigest()! }
+              : {}),
+          };
+        }
+        const minimumReaderVersion =
+          document.minimumReaderVersion() ?? undefined;
+
         // Return minimal document structure (Document doesn't have schema_version, it's in the file wrapper)
         return {
           nodes,
@@ -7120,7 +7211,11 @@ export namespace format {
           entry_scene_id: undefined,
           images: {},
           bitmaps: {},
+          external_assets: externalAssets,
           properties: {},
+          ...(minimumReaderVersion
+            ? { minimum_reader_version: minimumReaderVersion }
+            : {}),
         } satisfies grida.program.document.Document;
       }
     }

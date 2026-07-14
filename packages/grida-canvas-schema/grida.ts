@@ -537,7 +537,7 @@ export namespace grida {
 
 // oxlint-disable-next-line eslint(no-unused-vars)
 export namespace grida.program.document {
-  export const SCHEMA_VERSION = "0.91.0-beta+20260311";
+  export const SCHEMA_VERSION = "0.91.1-beta+20260714";
 
   /**
    * Schema version compatibility check.
@@ -779,6 +779,28 @@ export namespace grida.program.document {
     >;
   }
 
+  export type ExternalAssetKind = "image" | "video" | "audio" | "other";
+
+  /**
+   * Durable reference to bytes owned by a host content-addressed store.
+   * The document never stores a host path. `digest` is lowercase SHA-256.
+   */
+  export interface ExternalAssetRef {
+    digest: string;
+    kind: ExternalAssetKind;
+    mime_type: string;
+    display_name: string;
+    bytes: number;
+    width?: number;
+    height?: number;
+    duration_seconds?: number;
+    poster_digest?: string;
+  }
+
+  export interface IExternalAssetsRepository {
+    external_assets?: Record<string, ExternalAssetRef>;
+  }
+
   /**
    * background color of the scene
    */
@@ -893,6 +915,7 @@ export namespace grida.program.document {
     extends
       IImagesRepository,
       IBitmapsRepository,
+      IExternalAssetsRepository,
       document.INodesGraph,
       IDocumentProperties {
     // scene: Scene;
@@ -916,6 +939,8 @@ export namespace grida.program.document {
      * The currently active/entry scene ID.
      */
     entry_scene_id?: string;
+    /** Minimum schema reader required to preserve this document on write. */
+    minimum_reader_version?: string;
   }
 
   /**

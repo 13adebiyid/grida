@@ -1089,6 +1089,44 @@ describe("format roundtrip", () => {
     });
   });
 
+  describe("external asset repository", () => {
+    it("roundtrips content-addressed asset metadata and minimum reader version", () => {
+      const sceneId = "0-1";
+      const digest = "a".repeat(64);
+      const doc = createDocument(sceneId, {});
+      doc.minimum_reader_version = "0.91.1-beta+20260714";
+      doc.external_assets = {
+        [digest]: {
+          digest,
+          kind: "video",
+          mime_type: "video/mp4",
+          display_name: "Loop.mp4",
+          bytes: 153_000_000,
+          width: 1920,
+          height: 1080,
+          duration_seconds: 12.5,
+          poster_digest: "b".repeat(64),
+        },
+      };
+
+      const bytes = format.document.encode.toFlatbuffer(doc);
+      const decoded = format.document.decode.fromFlatbuffer(bytes);
+
+      expect(decoded.minimum_reader_version).toBe("0.91.1-beta+20260714");
+      expect(decoded.external_assets?.[digest]).toEqual(
+        doc.external_assets[digest]
+      );
+    });
+
+    it("keeps old documents readable with an empty external repository", () => {
+      const doc = createDocument("0-1", {});
+      const bytes = format.document.encode.toFlatbuffer(doc);
+      const decoded = format.document.decode.fromFlatbuffer(bytes);
+      expect(decoded.external_assets).toEqual({});
+      expect(decoded.minimum_reader_version).toBeUndefined();
+    });
+  });
+
   describe("cg.TextAlign", () => {
     it.each([
       ["left", "left"],

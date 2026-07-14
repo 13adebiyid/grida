@@ -1618,6 +1618,33 @@ table NodeSlot {
   node:Node;
 }
 
+/// A durable reference to bytes owned by an external content-addressed store.
+///
+/// The document records identity and rendering metadata, but the archive does
+/// not duplicate the payload. Runtime hosts resolve `digest` through their
+/// trusted asset provider and register the bytes under `res://images/<digest>`
+/// (or the equivalent media resource namespace).
+enum ExternalAssetKind:ubyte {
+  Unknown = 0,
+  Image = 1,
+  Video = 2,
+  Audio = 3,
+  Other = 4,
+}
+
+table ExternalAsset {
+  /// Lowercase SHA-256 hex digest. This is also the repository key.
+  digest:string (required, id: 0);
+  kind:ExternalAssetKind = Unknown (id: 1);
+  mime_type:string (id: 2);
+  display_name:string (id: 3);
+  bytes:ulong (id: 4);
+  width:uint (id: 5);
+  height:uint (id: 6);
+  duration_seconds:double = -1 (id: 7);
+  poster_digest:string (id: 8);
+}
+
 table CanvasDocument {
   /// Schema version string (keep in sync with TS `grida.program.document.SCHEMA_VERSION`).
   schema_version:string (id: 0);
@@ -1631,6 +1658,14 @@ table CanvasDocument {
 
   /// Scene node ids (scene nodes are also stored in `nodes`).
   scenes:[NodeIdentifier] (id: 2);
+
+  /// Content-addressed assets resolved by the embedding host. Entries are
+  /// sorted by digest by deterministic writers.
+  external_assets:[ExternalAsset] (id: 3);
+
+  /// Old readers compare this with their supported schema and open the
+  /// document read-only when they cannot safely preserve it.
+  minimum_reader_version:string (id: 4);
 }
 
 /// Top-level root for all use cases: `.grida` files, single-scene transfers

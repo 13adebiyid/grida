@@ -23,7 +23,7 @@ use rustc_hash::FxHashMap;
 ///
 /// Keep in sync with the TS constant `grida.program.document.SCHEMA_VERSION`
 /// (`packages/grida-canvas-schema/grida.ts`).
-pub const SCHEMA_VERSION: &str = "0.91.0-beta+20260311";
+pub const SCHEMA_VERSION: &str = "0.91.1-beta+20260714";
 
 use crate::cg::{
     alignment::Alignment,
@@ -191,6 +191,27 @@ fn singular_stroke_width(w: f32) -> SingularStrokeWidth {
 
 /// Result of decoding a `.grida` FlatBuffers binary that also carries the
 /// ID mapping needed for re-encoding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExternalAssetKind {
+    Image,
+    Video,
+    Audio,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternalAssetRef {
+    pub digest: String,
+    pub kind: ExternalAssetKind,
+    pub mime_type: String,
+    pub display_name: String,
+    pub bytes: u64,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration_seconds: Option<f64>,
+    pub poster_digest: Option<String>,
+}
+
 pub struct DecodeResult {
     /// The decoded scenes (typically one).
     pub scenes: Vec<Scene>,
@@ -203,6 +224,12 @@ pub struct DecodeResult {
     /// string stored in the FBS file. Required for [`encode`] round-trips so
     /// that child ordering is preserved exactly.
     pub position_map: HashMap<crate::node::id::NodeId, String>,
+    /// File schema version declared by the writer.
+    pub schema_version: Option<String>,
+    /// Minimum compatible reader required for a preserving write.
+    pub minimum_reader_version: Option<String>,
+    /// Host-resolved content-addressed asset repository.
+    pub external_assets: HashMap<String, ExternalAssetRef>,
 }
 
 /// Decode a `.grida` FlatBuffers binary into a `Scene`.
@@ -235,6 +262,40 @@ fn decode_all_inner(bytes: &[u8]) -> Result<DecodeResult, FbsDecodeError> {
     let document = grida_file
         .document()
         .ok_or(FbsDecodeError::MissingDocument)?;
+
+    let schema_version = document.schema_version().map(str::to_owned);
+    let minimum_reader_version = document.minimum_reader_version().map(str::to_owned);
+    let mut external_assets = HashMap::new();
+    if let Some(assets) = document.external_assets() {
+        for i in 0..assets.len() {
+            let asset = assets.get(i);
+            let digest = asset.digest().to_owned();
+            let kind = match asset.kind() {
+                fbs::ExternalAssetKind::Image => ExternalAssetKind::Image,
+                fbs::ExternalAssetKind::Video => ExternalAssetKind::Video,
+                fbs::ExternalAssetKind::Audio => ExternalAssetKind::Audio,
+                _ => ExternalAssetKind::Other,
+            };
+            external_assets.insert(
+                digest.clone(),
+                ExternalAssetRef {
+                    digest,
+                    kind,
+                    mime_type: asset
+                        .mime_type()
+                        .unwrap_or("application/octet-stream")
+                        .to_owned(),
+                    display_name: asset.display_name().unwrap_or("").to_owned(),
+                    bytes: asset.bytes(),
+                    width: (asset.width() > 0).then(|| asset.width()),
+                    height: (asset.height() > 0).then(|| asset.height()),
+                    duration_seconds: (asset.duration_seconds() >= 0.0)
+                        .then(|| asset.duration_seconds()),
+                    poster_digest: asset.poster_digest().map(str::to_owned),
+                },
+            );
+        }
+    }
 
     // ── 1. Collect scene node IDs (scene ordering) ──────────────────────────
     let mut scene_ids_ordered: Vec<String> = Vec::new();
@@ -535,6 +596,9 @@ fn decode_all_inner(bytes: &[u8]) -> Result<DecodeResult, FbsDecodeError> {
         id_map,
         scene_ids: scene_ids_ordered,
         position_map: position_map.into_iter().collect(),
+        schema_version,
+        minimum_reader_version,
+        external_assets,
     })
 }
 
@@ -2381,6 +2445,8 @@ pub fn encode(
             schema_version: Some(schema_version_str),
             nodes: Some(nodes_vec),
             scenes: Some(scenes_vec),
+            external_assets: None,
+            minimum_reader_version: None,
         },
     );
 
@@ -2452,6 +2518,8 @@ pub fn encode_multi(
             schema_version: Some(schema_version_str),
             nodes: Some(nodes_vec),
             scenes: Some(scenes_vec),
+            external_assets: None,
+            minimum_reader_version: None,
         },
     );
     let root = fbs::GridaFile::create(
