@@ -27,6 +27,15 @@ function fixture(): GridaImportDocumentV1 {
         displayName: "Photo.png",
         bytes: 5,
       },
+      {
+        importKey: "loop",
+        digest: "e".repeat(64),
+        kind: "video",
+        mimeType: "video/mp4",
+        displayName: "Loop.mp4",
+        bytes: 50,
+        durationSeconds: 12,
+      },
     ],
     scenes: [
       {
@@ -94,6 +103,17 @@ function fixture(): GridaImportDocumentV1 {
               ],
             },
           },
+          {
+            kind: "video",
+            importKey: "loop",
+            name: "Loop",
+            frame: { x: 0, y: 0, width: 1920, height: 1080 },
+            assetDigest: "e".repeat(64),
+            loop: true,
+            muted: true,
+            trimStartSeconds: 1,
+            trimEndSeconds: 10,
+          },
         ],
       },
     ],
@@ -116,6 +136,7 @@ describe("native document compiler", () => {
         "rectangle",
         "text",
         "vector",
+        "video",
       ])
     );
     expect(reopened.external_assets?.["d".repeat(64)]?.display_name).toBe(
@@ -149,6 +170,16 @@ describe("native document compiler", () => {
     vector.network.segments[0]!.b = 99;
     await expect(compileNativeDocument(badVector)).rejects.toMatchObject({
       code: "INVALID_VECTOR_NETWORK",
+    });
+
+    const badTrim = fixture();
+    const video = badTrim.scenes[0]!.nodes[4] as Extract<
+      (typeof badTrim.scenes)[number]["nodes"][number],
+      { kind: "video" }
+    >;
+    video.trimEndSeconds = 0.5;
+    await expect(compileNativeDocument(badTrim)).rejects.toMatchObject({
+      code: "INVALID_VIDEO_TRIM",
     });
   });
 

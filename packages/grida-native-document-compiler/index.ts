@@ -2,13 +2,13 @@ import cg from "@grida/cg";
 import { compilerIO } from "@grida/io/compiler";
 import grida from "@grida/schema";
 
-export const NATIVE_COMPILER_VERSION = "1.1.0";
+export const NATIVE_COMPILER_VERSION = "1.2.0";
 export const GRIDA_IMPORT_DOCUMENT_VERSION = 1 as const;
 export const GRIDA_IMPORT_RANGE_UNIT = "utf16-code-units" as const;
 export const NATIVE_COMPILER_CONTRACT_DESCRIPTOR =
-  "GridaImportDocumentV1|scene,node(rectangle,ellipse,polygon,star,vector,text,image)|utf16-code-units|sha256-assets|diagnostics-v1";
+  "GridaImportDocumentV1|scene,node(rectangle,ellipse,polygon,star,vector,text,image,video)|utf16-code-units|sha256-assets|diagnostics-v1";
 export const NATIVE_COMPILER_CONTRACT_HASH =
-  "56cf8e1f01415264e1a06f3387d82db713fe87f2a3fe0b957c49784a576262d3";
+  "8eea3d0d6c65be75dbfc59c7f0decfdddc666d7696f7c9c02e6b593bf6beeac5";
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const LIMITS = Object.freeze({
@@ -24,6 +24,7 @@ const LIMITS = Object.freeze({
   stageDimension: 16_384,
   coordinateMagnitude: 10_000_000,
   assetBytes: 512 * 1024 * 1024,
+  mediaSeconds: 7 * 24 * 60 * 60,
 });
 
 export type ImportColorV1 = { r: number; g: number; b: number; a: number };
@@ -116,6 +117,19 @@ export type ImportNodeV1 =
       kind: "image";
       assetDigest: string;
       fit?: "contain" | "cover" | "fill";
+    })
+  | (ImportNodeBaseV1 & {
+      kind: "video";
+      assetDigest: string;
+      posterDigest?: string;
+      fit?: "contain" | "cover" | "fill";
+      loop?: boolean;
+      muted?: boolean;
+      volume?: number;
+      autoplay?: boolean;
+      trimStartSeconds?: number;
+      trimEndSeconds?: number;
+      cornerRadius?: number;
     });
 
 export interface ImportAssetV1 {
@@ -632,6 +646,72 @@ async function compileNode(
         stroke_join: "miter",
         corner_radius: 0,
       } as grida.program.nodes.RectangleNode;
+    }
+    case "video": {
+      const asset = assetByDigest.get(node.assetDigest);
+      if (!asset || asset.kind !== "video") {
+        fail(
+          "INVALID_ASSET_REFERENCE",
+          "video node references a missing or non-video asset",
+          node.importKey
+        );
+      }
+      if (
+        node.posterDigest !== undefined &&
+        !SHA256_RE.test(node.posterDigest)
+      ) {
+        fail(
+          "INVALID_ASSET_REFERENCE",
+          "video poster reference is not a SHA-256 digest",
+          node.importKey
+        );
+      }
+      const trimStart = bounded(
+        node.trimStartSeconds ?? 0,
+        0,
+        LIMITS.mediaSeconds,
+        "trimStartSeconds",
+        node.importKey
+      );
+      const trimEnd = node.trimEndSeconds ?? -1;
+      if (
+        !Number.isFinite(trimEnd) ||
+        trimEnd < -1 ||
+        trimEnd > LIMITS.mediaSeconds ||
+        (trimEnd >= 0 && trimEnd <= trimStart)
+      ) {
+        fail(
+          "INVALID_VIDEO_TRIM",
+          "video trim end must be -1 or greater than trim start",
+          node.importKey
+        );
+      }
+      return {
+        type: "video",
+        ...base,
+        src: `res://videos/${node.assetDigest}`,
+        asset_digest: node.assetDigest,
+        ...(node.posterDigest
+          ? {
+              poster: `res://images/${node.posterDigest}`,
+              poster_asset_digest: node.posterDigest,
+            }
+          : {}),
+        fit: node.fit ?? "cover",
+        corner_radius: bounded(
+          node.cornerRadius ?? 0,
+          0,
+          LIMITS.stageDimension,
+          "cornerRadius",
+          node.importKey
+        ),
+        loop: node.loop ?? true,
+        muted: node.muted ?? true,
+        volume: bounded(node.volume ?? 0, 0, 1, "volume", node.importKey),
+        autoplay: node.autoplay ?? true,
+        trim_start_seconds: trimStart,
+        trim_end_seconds: trimEnd,
+      } as grida.program.nodes.VideoNode;
     }
     case "text": {
       validateRuns(node);

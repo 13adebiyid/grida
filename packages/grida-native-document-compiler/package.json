@@ -1,6 +1,6 @@
 {
   "name": "@grida/native-document-compiler",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": false,
   "description": "Deterministic source-neutral compiler for native Grida documents",
   "license": "MIT",
