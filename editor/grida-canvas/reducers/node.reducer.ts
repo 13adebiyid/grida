@@ -583,9 +583,46 @@ const safe_properties: Record<string, SafePropertyHandler<never>> = {
     },
   }),
   fit: defineNodeProperty<"fit">({
-    assert: (node) => node.type === "image",
+    assert: (node) => node.type === "image" || node.type === "video",
     apply: (draft, value) => {
       (draft as UN).fit = value;
+    },
+  }),
+  loop: defineNodeProperty<"loop">({
+    assert: (node) => node.type === "video",
+    apply: (draft, value) => {
+      (draft as UN).loop = value;
+    },
+  }),
+  muted: defineNodeProperty<"muted">({
+    assert: (node) => node.type === "video",
+    apply: (draft, value) => {
+      (draft as UN).muted = value;
+    },
+  }),
+  autoplay: defineNodeProperty<"autoplay">({
+    assert: (node) => node.type === "video",
+    apply: (draft, value) => {
+      (draft as UN).autoplay = value;
+    },
+  }),
+  volume: defineNodeProperty<"volume">({
+    assert: (node) => node.type === "video",
+    apply: (draft, value) => {
+      (draft as UN).volume = cmath.clamp(value, 0, 1);
+    },
+  }),
+  trim_start_seconds: defineNodeProperty<"trim_start_seconds">({
+    assert: (node) => node.type === "video",
+    apply: (draft, value) => {
+      (draft as UN).trim_start_seconds = Math.max(0, value);
+    },
+  }),
+  trim_end_seconds: defineNodeProperty<"trim_end_seconds">({
+    assert: (node) => node.type === "video",
+    apply: (draft, value) => {
+      const start = (draft as UN).trim_start_seconds ?? 0;
+      (draft as UN).trim_end_seconds = value < 0 ? -1 : Math.max(start, value);
     },
   }),
   layout_padding_top: defineNodeProperty<"layout_padding_top">({

@@ -180,9 +180,9 @@ export function useContextMenuActions(ids: string[]): ContextMenuActions {
         disabled: !isSingle,
         onSelect: () => {
           try {
-            const node = editor.state.document.nodes[ids[0] as string] as
-              | Record<string, unknown>
-              | undefined;
+            const node = editor.state.document.nodes[
+              ids[0] as string
+            ] as unknown as Record<string, unknown> | undefined;
             if (!node) return;
             const style = readLayerStyle(node);
             window.localStorage.setItem(

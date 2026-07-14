@@ -310,6 +310,12 @@ function ModeMixedNodeProperties({
     active: node.active,
     locked: node.locked,
     fit: node.fit,
+    loop: node.loop,
+    muted: node.muted,
+    volume: node.volume,
+    autoplay: node.autoplay,
+    trim_start_seconds: node.trim_start_seconds,
+    trim_end_seconds: node.trim_end_seconds,
     cursor: node.cursor,
     blend_mode: node.blend_mode,
   }));
@@ -552,6 +558,12 @@ function ModeNodeProperties({
     angle_offset: node.angle_offset,
 
     fit: node.fit,
+    loop: node.loop,
+    muted: node.muted,
+    volume: node.volume,
+    autoplay: node.autoplay,
+    trim_start_seconds: node.trim_start_seconds,
+    trim_end_seconds: node.trim_end_seconds,
 
     //
     border: node.border,
@@ -576,6 +588,12 @@ function ModeNodeProperties({
     angle_offset,
 
     fit,
+    loop,
+    muted,
+    volume,
+    autoplay,
+    trim_start_seconds,
+    trim_end_seconds,
 
     //
     border,
@@ -591,6 +609,7 @@ function ModeNodeProperties({
   const is_templateinstance = type === "template_instance";
   const is_text = type === "tspan";
   const is_image = type === "image";
+  const is_video = type === "video";
   const is_stylable = type !== "template_instance";
 
   return (
@@ -738,6 +757,98 @@ function ModeNodeProperties({
           <PropertyRow>
             <PropertyLineLabel>Fit</PropertyLineLabel>
             <BoxFitControl value={fit} onValueChange={actions.fit} />
+          </PropertyRow>
+        </PropertySectionContent>
+      </PropertySection>
+
+      <PropertySection hidden={!is_video} className="border-b">
+        <PropertySectionHeaderItem>
+          <PropertySectionHeaderLabel>Video</PropertySectionHeaderLabel>
+        </PropertySectionHeaderItem>
+        <PropertySectionContent>
+          <PropertyRow>
+            <PropertyLineLabel>Fit</PropertyLineLabel>
+            <BoxFitControl value={fit} onValueChange={actions.fit} />
+          </PropertyRow>
+          <PropertyRow>
+            <PropertyLineLabel>Loop</PropertyLineLabel>
+            <Checkbox
+              checked={loop ?? true}
+              onCheckedChange={(value) =>
+                instance.commands.changeVideoNodePlayback(node_id, {
+                  loop: value === true,
+                })
+              }
+            />
+          </PropertyRow>
+          <PropertyRow>
+            <PropertyLineLabel>Autoplay</PropertyLineLabel>
+            <Checkbox
+              checked={autoplay ?? true}
+              onCheckedChange={(value) =>
+                instance.commands.changeVideoNodePlayback(node_id, {
+                  autoplay: value === true,
+                })
+              }
+            />
+          </PropertyRow>
+          <PropertyRow>
+            <PropertyLineLabel>Muted</PropertyLineLabel>
+            <Checkbox
+              checked={muted ?? true}
+              onCheckedChange={(value) =>
+                instance.commands.changeVideoNodePlayback(node_id, {
+                  muted: value === true,
+                })
+              }
+            />
+          </PropertyRow>
+          <PropertyRow>
+            <PropertyLineLabel>Volume</PropertyLineLabel>
+            <InputPropertyNumber
+              mode="fixed"
+              min={0}
+              max={1}
+              step={0.01}
+              scale={100}
+              suffix="%"
+              value={volume ?? 0}
+              onValueCommit={(value) =>
+                instance.commands.changeVideoNodePlayback(node_id, {
+                  volume: value,
+                })
+              }
+            />
+          </PropertyRow>
+          <PropertyRow>
+            <PropertyLineLabel>Start</PropertyLineLabel>
+            <InputPropertyNumber
+              mode="fixed"
+              min={0}
+              step={0.1}
+              suffix="s"
+              value={trim_start_seconds ?? 0}
+              onValueCommit={(value) =>
+                instance.commands.changeVideoNodePlayback(node_id, {
+                  trim_start_seconds: value,
+                })
+              }
+            />
+          </PropertyRow>
+          <PropertyRow>
+            <PropertyLineLabel>End</PropertyLineLabel>
+            <InputPropertyNumber
+              mode="fixed"
+              min={-1}
+              step={0.1}
+              suffix="s"
+              value={trim_end_seconds ?? -1}
+              onValueCommit={(value) =>
+                instance.commands.changeVideoNodePlayback(node_id, {
+                  trim_end_seconds: value,
+                })
+              }
+            />
           </PropertyRow>
         </PropertySectionContent>
       </PropertySection>

@@ -3854,6 +3854,20 @@ export namespace editor.api {
       strokeMiterLimit: number
     ): void;
     changeNodePropertyFit(node_id: NodeID, fit: cg.BoxFit): void;
+    changeVideoNodePlayback(
+      node_id: NodeID,
+      values: Partial<
+        Pick<
+          grida.program.nodes.VideoNode,
+          | "loop"
+          | "muted"
+          | "volume"
+          | "autoplay"
+          | "trim_start_seconds"
+          | "trim_end_seconds"
+        >
+      >
+    ): void;
 
     addNodeFill(node_id: NodeID, fill: cg.Paint, at?: "start" | "end"): void;
     addNodeFill(node_id: NodeID[], fill: cg.Paint, at?: "start" | "end"): void;

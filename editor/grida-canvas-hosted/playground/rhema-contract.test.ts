@@ -331,7 +331,7 @@ describe("materializeRhemaThemeDocument (inverse of buildRhemaThemeRuntimeJson)"
     } as never;
     const { document } = materializeRhemaThemeDocument(theme);
     const tspan = Object.values(document.nodes).find(
-      (n: never) => (n as { type?: string }).type === "tspan"
+      (n) => n.type === "tspan"
     ) as { text?: string };
     expect(tspan?.text).toBe("Lyric Body");
   });

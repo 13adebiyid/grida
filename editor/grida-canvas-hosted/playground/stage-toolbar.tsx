@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { STAGE_COMPONENTS } from "./stage-components";
 import type { RhemaComponentKind } from "./rhema-contract";
+import kolor from "@grida/color";
 
 const RHEMA_STAGE_NAME = "Canvas 1920x1080";
 const RHEMA_STAGE_WIDTH = 1920;
@@ -58,7 +59,7 @@ function createRhemaStagePrototype(): grida.program.nodes.ContainerNodePrototype
     clips_content: true,
     fill: {
       type: "solid",
-      color: { r: 0, g: 0, b: 0, a: 0 },
+      color: kolor.colorformats.RGBA32F.fromHEX("#00000000"),
       active: true,
     },
     stroke_width: 1,

@@ -2346,6 +2346,41 @@ class EditorDocumentStore
     });
   }
 
+  changeVideoNodePlayback(
+    node_id: string,
+    values: Partial<
+      Pick<
+        grida.program.nodes.VideoNode,
+        | "loop"
+        | "muted"
+        | "volume"
+        | "autoplay"
+        | "trim_start_seconds"
+        | "trim_end_seconds"
+      >
+    >
+  ) {
+    const current = this.state.document.nodes[node_id];
+    if (current?.type !== "video") return;
+    const next = { ...values };
+    if (typeof next.volume === "number") {
+      next.volume = Math.max(0, Math.min(1, next.volume));
+    }
+    if (typeof next.trim_start_seconds === "number") {
+      next.trim_start_seconds = Math.max(0, next.trim_start_seconds);
+    }
+    if (typeof next.trim_end_seconds === "number") {
+      const start = next.trim_start_seconds ?? current.trim_start_seconds ?? 0;
+      next.trim_end_seconds =
+        next.trim_end_seconds < 0 ? -1 : Math.max(start, next.trim_end_seconds);
+    }
+    this.dispatch({
+      type: "node/change/*",
+      node_id,
+      ...next,
+    });
+  }
+
   changeNodePropertyCornerRadius(
     node_id: string,
     cornerRadius: cg.CornerRadius

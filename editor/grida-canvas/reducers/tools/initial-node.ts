@@ -235,7 +235,10 @@ export default function initialNode(
         src: "/dummy/video/mp4/mp4-30s-5mb.mp4",
         loop: true,
         muted: true,
+        volume: 0,
         autoplay: true,
+        trim_start_seconds: 0,
+        trim_end_seconds: -1,
         ...seed,
       } satisfies grida.program.nodes.VideoNode;
     }

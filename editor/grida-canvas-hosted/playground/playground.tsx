@@ -118,6 +118,7 @@ import { editor } from "@/grida-canvas";
 // Alias for scopes where a `useCurrentEditor()` instance shadows `editor`.
 import { editor as editorNamespace } from "@/grida-canvas";
 import { dq } from "@/grida-canvas/query";
+import { ExternalAssetUrlProvider } from "@/grida-canvas-react-renderer-dom/nodes/external-asset-url";
 import { SceneThumbnailRenderer } from "./scene-thumbnail-renderer";
 import useDisableSwipeBack from "@/grida-canvas-react/viewport/hooks/use-disable-browser-swipe-back";
 import { WindowGlobalCurrentEditorProvider } from "@/grida-canvas-react/devtools/global-api-host";
@@ -731,6 +732,29 @@ export default function CanvasPlayground({
   );
   const [errmsg, setErrmsg] = useState<string | null>(null);
   const [loadingOverlay, setLoadingOverlay] = useState(true);
+  const [externalAssetUrls, setExternalAssetUrls] = useState<
+    Record<string, string>
+  >({});
+  const externalAssetRefsKey = useEditorState(instance, (state) =>
+    Object.entries(state.document.external_assets ?? {})
+      .filter(([, asset]) => asset.kind === "image" || asset.kind === "video")
+      .map(([ref]) => ref)
+      .sort()
+      .join(",")
+  );
+  const currentSceneHasVideo = useEditorState(instance, (state) => {
+    if (!state.scene_id) return false;
+    const pending = [...(state.document.links[state.scene_id] ?? [])];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const id = pending.pop()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      if (state.document.nodes[id]?.type === "video") return true;
+      pending.push(...(state.document.links[id] ?? []));
+    }
+    return false;
+  });
   const handleCanvasRef = useCallback((node: HTMLCanvasElement | null) => {
     setCanvasElement(node);
   }, []);
@@ -813,6 +837,44 @@ export default function CanvasPlayground({
       instance.onUnresolvedImages = null;
     };
   }, [canvasReady, instance, parentOrigin, profile]);
+
+  // The browser owns native video playback while the WASM surface continues
+  // to own hit-testing, selection and document mutation. Resolve CAS digests
+  // through the same host allow-list used for images; the canonical document
+  // remains portable and never receives a machine-local path.
+  useEffect(() => {
+    if (
+      profile !== "bible-helper" ||
+      !parentOrigin ||
+      !documentReady ||
+      !externalAssetRefsKey
+    ) {
+      setExternalAssetUrls({});
+      return;
+    }
+    let cancelled = false;
+    const refs = externalAssetRefsKey.split(",");
+    void (async () => {
+      const batches: string[][] = [];
+      for (let i = 0; i < refs.length; i += 64) {
+        batches.push(refs.slice(i, i + 64));
+      }
+      const locations = (
+        await Promise.all(
+          batches.map((batch) =>
+            requestExternalAssetLocations(parentOrigin, batch)
+          )
+        )
+      ).flat();
+      if (cancelled) return;
+      setExternalAssetUrls(
+        Object.fromEntries(locations.map((item) => [item.ref, item.url]))
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [documentReady, externalAssetRefsKey, parentOrigin, profile]);
 
   // Editor → host: ask for the operator's installed fonts, then keep them in a
   // ref + a family-name set (the latter tells the picker to render a local CSS
@@ -1549,6 +1611,8 @@ export default function CanvasPlayground({
                             parentOrigin={parentOrigin}
                             workspace={workspace}
                             runProgrammaticEdit={runProgrammaticEdit}
+                            currentSceneHasVideo={currentSceneHasVideo}
+                            externalAssetUrls={externalAssetUrls}
                           />
                         </StarterKitOrgIdProvider>
                       </UserCustomTemplatesProvider>
@@ -1574,6 +1638,8 @@ function Consumer({
   parentOrigin,
   workspace,
   runProgrammaticEdit,
+  currentSceneHasVideo,
+  externalAssetUrls,
 }: {
   backend: "dom" | "canvas";
   canvasRef?: (canvas: HTMLCanvasElement | null) => void;
@@ -1592,6 +1658,8 @@ function Consumer({
    *  suppressed — for the rhema boot normalizers, which are programmatic
    *  housekeeping, not operator edits. */
   runProgrammaticEdit: (fn: () => void) => void;
+  currentSceneHasVideo: boolean;
+  externalAssetUrls: Readonly<Record<string, string>>;
 }) {
   const isBibleHelper = profile === "bible-helper";
   const {
@@ -1992,11 +2060,34 @@ function Consumer({
                             {/* {backend === "canvas" && (
                     <__WIP_UNSTABLE_WasmContent editor={instance} />
                   )} */}
-                            {backend === "canvas" && <Canvas ref={canvasRef} />}
+                            {backend === "canvas" && (
+                              <Canvas
+                                ref={canvasRef}
+                                hidden={currentSceneHasVideo}
+                              />
+                            )}
+                            {backend === "canvas" && currentSceneHasVideo && (
+                              <ExternalAssetUrlProvider
+                                locations={externalAssetUrls}
+                              >
+                                <div
+                                  className="absolute inset-0 pointer-events-none"
+                                  aria-hidden="true"
+                                >
+                                  <AutoInitialFitTransformer>
+                                    <StandaloneSceneContent primary={false} />
+                                  </AutoInitialFitTransformer>
+                                </div>
+                              </ExternalAssetUrlProvider>
+                            )}
                             {backend === "dom" && (
-                              <AutoInitialFitTransformer>
-                                <StandaloneSceneContent />
-                              </AutoInitialFitTransformer>
+                              <ExternalAssetUrlProvider
+                                locations={externalAssetUrls}
+                              >
+                                <AutoInitialFitTransformer>
+                                  <StandaloneSceneContent />
+                                </AutoInitialFitTransformer>
+                              </ExternalAssetUrlProvider>
                             )}
                             {(isBibleHelper || ui.toolbar_bottom) && (
                               <>
@@ -2080,7 +2171,13 @@ function Consumer({
   );
 }
 
-function Canvas({ ref }: { ref?: (canvas: HTMLCanvasElement | null) => void }) {
+function Canvas({
+  ref,
+  hidden = false,
+}: {
+  ref?: (canvas: HTMLCanvasElement | null) => void;
+  hidden?: boolean;
+}) {
   const dpr = useDPR();
 
   return (
@@ -2100,6 +2197,7 @@ function Canvas({ ref }: { ref?: (canvas: HTMLCanvasElement | null) => void }) {
           style={{
             width: width,
             height: height,
+            opacity: hidden ? 0 : 1,
           }}
         />
       )}

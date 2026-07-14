@@ -127,4 +127,33 @@ describe("Node Properties (headless)", () => {
     ] as grida.program.nodes.UnknownNode;
     expect(node.opacity).toBe(0.3);
   });
+
+  test("video playback controls are bounded and persisted as native properties", () => {
+    const id = ed.doc.insertNode({
+      type: "video",
+      src: "https://cdn.example/clip.mp4",
+      fit: "cover",
+      loop: true,
+      muted: true,
+      autoplay: true,
+      volume: 0,
+      trim_start_seconds: 0,
+      trim_end_seconds: -1,
+    });
+
+    ed.doc.changeVideoNodePlayback(id, {
+      loop: false,
+      muted: false,
+      volume: 2,
+      trim_start_seconds: 4,
+      trim_end_seconds: 2,
+    });
+
+    const video = ed.state.document.nodes[id] as grida.program.nodes.VideoNode;
+    expect(video.loop).toBe(false);
+    expect(video.muted).toBe(false);
+    expect(video.volume).toBe(1);
+    expect(video.trim_start_seconds).toBe(4);
+    expect(video.trim_end_seconds).toBe(4);
+  });
 });
