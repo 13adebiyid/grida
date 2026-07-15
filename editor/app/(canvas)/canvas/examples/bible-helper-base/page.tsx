@@ -20,6 +20,7 @@
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import Editor from "../../editor";
+import { validateRhemaParentOrigin } from "@/grida-canvas-hosted/playground/rhema-parent-origin";
 
 function BibleHelperBaseInner() {
   const params = useSearchParams();
@@ -54,19 +55,13 @@ function BibleHelperBaseInner() {
     workspace === "stage" ? "stage" : workspace === "slide" ? "slide" : "theme";
 
   // The Bible Helper opener stamps its origin onto the URL so we can use it
-  // as the postMessage target instead of "*". Validated as a parseable http(s)
-  // URL; anything else is dropped and saveThemeToBibleHelper will fail closed.
-  let validatedParentOrigin: string | undefined;
-  if (typeof parentOrigin === "string" && parentOrigin.trim()) {
-    try {
-      const parsed = new URL(parentOrigin.trim());
-      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-        validatedParentOrigin = parsed.origin;
-      }
-    } catch {
-      // ignore malformed parentOrigin
-    }
-  }
+  // as the postMessage target instead of "*". Browser-hosted http(s) origins
+  // retain their existing contract; a packaged custom scheme is accepted only
+  // when it exactly matches this same-origin editor frame.
+  const validatedParentOrigin = validateRhemaParentOrigin(
+    parentOrigin,
+    typeof window === "undefined" ? undefined : window.location.origin
+  );
 
   // Filekey prefix is namespace-distinct per workspace so a single
   // operator can keep parallel theme + stage + slide documents in OPFS

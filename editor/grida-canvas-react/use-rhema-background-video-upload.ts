@@ -21,6 +21,7 @@
  */
 import { toast } from "sonner";
 import type { Editor } from "@/grida-canvas/editor";
+import { validateRhemaParentOrigin } from "@/grida-canvas-hosted/playground/rhema-parent-origin";
 
 const PICK_MEDIA_REQUEST_TYPE = "bible-helper-pick-media";
 const PICK_MEDIA_RESULT_TYPE = "bible-helper-pick-media-result";
@@ -41,12 +42,11 @@ function resolveParentOrigin(): string {
     const parentOrigin = new URLSearchParams(window.location.search).get(
       "parentOrigin"
     );
-    if (parentOrigin) {
-      const parsed = new URL(parentOrigin);
-      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-        return parsed.origin;
-      }
-    }
+    const validated = validateRhemaParentOrigin(
+      parentOrigin,
+      window.location.origin
+    );
+    if (validated) return validated;
   } catch {
     // ignore malformed parentOrigin
   }
