@@ -82,16 +82,47 @@ export namespace compilerIO {
     ) {
       throw new Error("snapshot schema is incompatible with the compiler ABI");
     }
-    const canonical = decode(
+    const sourceDocument = model.document as grida.program.document.Document;
+    const binaryCanonical = decode(
       encode(
         {
-          ...(model.document as grida.program.document.Document),
+          ...sourceDocument,
           images: {},
           bitmaps: {},
         },
         model.version
       )
     );
+    if (
+      sourceDocument.entry_scene_id !== undefined &&
+      (typeof sourceDocument.entry_scene_id !== "string" ||
+        !binaryCanonical.scenes_ref.includes(sourceDocument.entry_scene_id))
+    ) {
+      throw new Error("snapshot entry scene is invalid");
+    }
+    if (
+      !sourceDocument.properties ||
+      typeof sourceDocument.properties !== "object" ||
+      Array.isArray(sourceDocument.properties)
+    ) {
+      throw new Error("snapshot document properties are invalid");
+    }
+    if (
+      sourceDocument.metadata !== undefined &&
+      (!sourceDocument.metadata ||
+        typeof sourceDocument.metadata !== "object" ||
+        Array.isArray(sourceDocument.metadata))
+    ) {
+      throw new Error("snapshot document metadata is invalid");
+    }
+    const canonical: grida.program.document.Document = {
+      ...binaryCanonical,
+      properties: sourceDocument.properties,
+      ...(sourceDocument.entry_scene_id
+        ? { entry_scene_id: sourceDocument.entry_scene_id }
+        : {}),
+      ...(sourceDocument.metadata ? { metadata: sourceDocument.metadata } : {}),
+    };
     const canonicalSnapshot = snapshot(canonical, model.version);
     const files: Record<string, Uint8Array> = {
       "manifest.json": strToU8(

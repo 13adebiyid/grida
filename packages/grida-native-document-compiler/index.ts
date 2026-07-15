@@ -3,13 +3,13 @@ import { compilerIO } from "@grida/io/compiler";
 import grida from "@grida/schema";
 import { validateAnimationRepository } from "../grida-animation";
 
-export const NATIVE_COMPILER_VERSION = "1.4.0";
+export const NATIVE_COMPILER_VERSION = "1.5.0";
 export const GRIDA_IMPORT_DOCUMENT_VERSION = 1 as const;
 export const GRIDA_IMPORT_RANGE_UNIT = "utf16-code-units" as const;
 export const NATIVE_COMPILER_CONTRACT_DESCRIPTOR =
-  "GridaImportDocumentV1|scene,node(rectangle,ellipse,polygon,star,vector,text,image,video),animation-v1|utf16-code-units|sha256-assets|diagnostics-v1|merge-repack-v1";
+  "GridaImportDocumentV1|scene,node(rectangle,ellipse,polygon,star,vector,text,image,video),animation-v1|utf16-code-units|sha256-assets|diagnostics-v1|merge-repack-v2|snapshot-metadata-v1";
 export const NATIVE_COMPILER_CONTRACT_HASH =
-  "016dc39b150a657b7a7833c01b3b2fee2255c376b68ad2a1a734867b47a37131";
+  "d86376803261d9f69ba112af00211f715be33ed8b6bd1bee728e4faf16c1bd88";
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const LIMITS = Object.freeze({
@@ -1250,7 +1250,13 @@ export async function repackNativeDocument(input: {
   const semanticHash = await sha256(stableStringify(repacked.document));
   const reopened = compilerIO.unpack(repacked.archive);
   const decoded = compilerIO.decode(reopened.document);
-  if ((await sha256(stableStringify(decoded))) !== semanticHash) {
+  const expectedBinaryProjection = compilerIO.decode(
+    compilerIO.encode(repacked.document, grida.program.document.SCHEMA_VERSION)
+  );
+  if (
+    (await sha256(stableStringify(decoded))) !==
+    (await sha256(stableStringify(expectedBinaryProjection)))
+  ) {
     fail(
       "CODEC_ROUNDTRIP_MISMATCH",
       "repacked document changed after production codec round-trip"

@@ -179,6 +179,10 @@ import {
   requestBgVideoPosterFromHost,
 } from "./rhema-bg-video-poster";
 import {
+  buildRhemaSaveDocumentPayload,
+  serializeRhemaEditorSnapshot,
+} from "./rhema-save-document";
+import {
   fetchVerifiedExternalAsset,
   requestExternalAssetLocations,
 } from "./rhema-external-assets";
@@ -357,13 +361,7 @@ function buildSaveDocumentPayload(
 ): { archiveBytes: ArrayBuffer; snapshotJson: string } | null {
   try {
     const dir = instance.archivedir();
-    const zipBytes = new Uint8Array(io.archive.pack(dir.document, dir.images));
-    const snapshotJson = io.snapshot.stringify({
-      version: undefined,
-      document: dir.document,
-    });
-    // Copy into a tight standalone ArrayBuffer so it is transferable.
-    return { archiveBytes: zipBytes.buffer as ArrayBuffer, snapshotJson };
+    return buildRhemaSaveDocumentPayload(dir);
   } catch (err) {
     console.warn("[bh-save] document attach skipped:", err);
     return null;
@@ -939,10 +937,9 @@ export default function CanvasPlayground({
         // WASM heap (restore re-inits from the snapshot; refs resolve via
         // the room's persisted images). Do NOT call instance.archivedir()
         // here: it copies every photo's bytes out of WASM per tick.
-        const json = io.snapshot.stringify({
-          version: undefined,
-          document: instance.getSnapshot().document,
-        });
+        const json = serializeRhemaEditorSnapshot(
+          instance.getSnapshot().document
+        );
         void opfs
           .get("document.draft.grida1")
           .write(new TextEncoder().encode(json));
@@ -2006,10 +2003,7 @@ function Consumer({
           const bytes = io.GRID.encode(dir.document);
           await opfs.get("document.grida").write(bytes);
           // Also write document.grida1 for migration purposes
-          const snapshotJson = io.snapshot.stringify({
-            version: undefined, // Version is optional in snapshot format
-            document: dir.document,
-          });
+          const snapshotJson = serializeRhemaEditorSnapshot(dir.document);
           await opfs
             .get("document.grida1")
             .write(new TextEncoder().encode(snapshotJson));
@@ -2795,10 +2789,7 @@ function SidebarLeft({
         }
         const docBytes = io.GRID.encode(dir.document);
         await opfs.get("document.grida").write(docBytes);
-        const snapshotJson = io.snapshot.stringify({
-          version: undefined,
-          document: dir.document,
-        });
+        const snapshotJson = serializeRhemaEditorSnapshot(dir.document);
         await opfs
           .get("document.grida1")
           .write(new TextEncoder().encode(snapshotJson));
@@ -2943,10 +2934,7 @@ function SidebarLeft({
         }
         const docBytes = io.GRID.encode(dir.document);
         await opfs.get("document.grida").write(docBytes);
-        const snapshotJson = io.snapshot.stringify({
-          version: undefined,
-          document: dir.document,
-        });
+        const snapshotJson = serializeRhemaEditorSnapshot(dir.document);
         await opfs
           .get("document.grida1")
           .write(new TextEncoder().encode(snapshotJson));

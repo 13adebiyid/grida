@@ -223,13 +223,31 @@ describe("native document compiler", () => {
   it("repacks a merged snapshot with matching binary data and embedded assets", async () => {
     const compiled = await compileNativeDocument(fixture());
     const snapshot = JSON.parse(compiled.snapshotJson) as {
-      document: { nodes: Record<string, { type: string; text?: string }> };
+      document: {
+        nodes: Record<string, { type: string; text?: string }>;
+        scenes_ref: string[];
+      };
     };
     const text = Object.values(snapshot.document.nodes).find(
       (node) => node.type === "text"
     );
     expect(text).toBeDefined();
     text!.text = "Operator + source merge";
+    const sceneId = snapshot.document.scenes_ref[0]!;
+    Object.assign(snapshot.document, {
+      entry_scene_id: sceneId,
+      properties: {
+        "fixture:property": { type: "string", default: "preserved" },
+      },
+      metadata: {
+        [sceneId]: {
+          userdata: {
+            rhema_workspace: "slide",
+            rhema_stage_node_id: "stage-1",
+          },
+        },
+      },
+    });
     const embedded = new Uint8Array([1, 2, 3, 4]);
     const repacked = await repackNativeDocument({
       snapshotJson: JSON.stringify(snapshot),
@@ -247,8 +265,40 @@ describe("native document compiler", () => {
       embedded
     );
     expect(JSON.parse(repacked.snapshotJson).document).toEqual(
-      JSON.parse(compilerIO.snapshot(document)).document
+      expect.objectContaining({
+        entry_scene_id: sceneId,
+        properties: {
+          "fixture:property": { type: "string", default: "preserved" },
+        },
+        metadata: {
+          [sceneId]: {
+            userdata: {
+              rhema_workspace: "slide",
+              rhema_stage_node_id: "stage-1",
+            },
+          },
+        },
+      })
     );
+    expect(compilerIO.unpack(repacked.archive).snapshotJson).toBe(
+      repacked.snapshotJson
+    );
+  });
+
+  it("rejects a versionless repack snapshot", async () => {
+    const compiled = await compileNativeDocument(fixture());
+    const snapshot = JSON.parse(compiled.snapshotJson) as Record<
+      string,
+      unknown
+    >;
+    delete snapshot.version;
+
+    await expect(
+      repackNativeDocument({
+        snapshotJson: JSON.stringify(snapshot),
+        sourceMap: compiled.sourceMap,
+      })
+    ).rejects.toMatchObject({ code: "REPACK_FAILED" });
   });
 
   it("honors cancellation and locks the published contract descriptor", async () => {
