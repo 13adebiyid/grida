@@ -102,101 +102,10 @@ const STRIP_SERVER_ONLY_FILES = ["lib/ai/server.ts", "lib/ai/credits/actions.ts"
 // call dynamic server APIs (cookies(), headers()) but only need a defaulted
 // stub for the bible-helper-base flow.
 const FILE_SWAPS = {
-  // Convert bible-helper-base page to a Client Component that reads URL params
-  // at runtime. Server-side `await searchParams` forces dynamic rendering, which
-  // is incompatible with `output: "export"`.
-  //
-  // IMPORTANT: this stub is the source-of-truth for the BUILT page —
-  // it overwrites whatever lives in app/(canvas)/... during build, then
-  // restores. So every URL param that needs to flow into the editor
-  // MUST be read here. Currently: room, scene, parentOrigin, workspace.
-  "app/(canvas)/canvas/examples/bible-helper-base/page.tsx": `"use client";
-import { useSearchParams } from "next/navigation";
-import { useMemo, Suspense } from "react";
-import Editor from "../../editor";
-
-// Static-export stub: read params client-side instead of server-side.
-// Restored by build-static.mjs after build.
-
-function BibleHelperBaseInner() {
-  const searchParams = useSearchParams();
-  const {
-    roomId,
-    initialSceneId,
-    validatedParentOrigin,
-    workspaceMode,
-    filekey,
-    restoreDraftOnBoot,
-  } = useMemo(() => {
-      const room = searchParams.get("room");
-      const scene = searchParams.get("scene");
-      const parentOrigin = searchParams.get("parentOrigin");
-      const workspace = searchParams.get("workspace");
-      // Crash-banner Restore: apply the crash draft on boot, no prompt.
-      const restoreDraft = searchParams.get("bhRestoreDraft");
-      const roomId =
-        typeof room === "string" && room.trim() ? room.trim() : "default";
-      const initialSceneId =
-        typeof scene === "string" && scene.trim() ? scene.trim() : undefined;
-      const workspaceMode: "stage" | "theme" | "slide" =
-        workspace === "stage"
-          ? "stage"
-          : workspace === "slide"
-            ? "slide"
-            : "theme";
-      let validatedParentOrigin: string | undefined;
-      if (typeof parentOrigin === "string" && parentOrigin.trim()) {
-        try {
-          const parsed = new URL(parentOrigin.trim());
-          if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-            validatedParentOrigin = parsed.origin;
-          }
-        } catch {
-          // ignore malformed parentOrigin
-        }
-      }
-      // Filekey prefix is namespace-distinct per workspace so theme +
-      // stage + slide OPFS docs never collide.
-      const filekeyPrefix =
-        workspaceMode === "stage"
-          ? "rhema-stage-v1"
-          : workspaceMode === "slide"
-            ? "rhema-slide-v1"
-            : "rhema-base-v4";
-      return {
-        roomId,
-        initialSceneId,
-        validatedParentOrigin,
-        workspaceMode,
-        filekey: \`\${filekeyPrefix}-\${roomId}\`,
-        restoreDraftOnBoot: restoreDraft === "1",
-      };
-    }, [searchParams]);
-
-  return (
-    <main className="w-screen h-screen overflow-hidden">
-      <Editor
-        backend="canvas"
-        room_id={roomId}
-        initialSceneId={initialSceneId}
-        parentOrigin={validatedParentOrigin}
-        profile="bible-helper"
-        workspace={workspaceMode}
-        filekey={filekey}
-        restoreDraftOnBoot={restoreDraftOnBoot}
-      />
-    </main>
-  );
-}
-
-export default function BibleHelperBasePage() {
-  return (
-    <Suspense fallback={null}>
-      <BibleHelperBaseInner />
-    </Suspense>
-  );
-}
-`,
+  // bible-helper-base/page.tsx is already a client-only, Suspense-wrapped,
+  // runtime-search-param page and is therefore static-export compatible.
+  // Build it directly so the packaged editor cannot drift behind the shared
+  // origin/session logic in the real source file.
   "app/(canvas)/layout.tsx": `import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";

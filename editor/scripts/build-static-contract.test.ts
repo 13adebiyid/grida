@@ -1,0 +1,26 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+function source(relative: string): string {
+  return readFileSync(
+    fileURLToPath(new URL(relative, import.meta.url)),
+    "utf8"
+  );
+}
+
+describe("Bible Helper static-export page contract", () => {
+  it("builds the real runtime-param page instead of an inline shadow copy", () => {
+    const buildScript = source("./build-static.mjs");
+    const page = source(
+      "../app/(canvas)/canvas/examples/bible-helper-base/page.tsx"
+    );
+
+    expect(buildScript).not.toMatch(
+      /["']app\/\(canvas\)\/canvas\/examples\/bible-helper-base\/page\.tsx["']\s*:/
+    );
+    expect(page).toContain('"use client"');
+    expect(page).toContain("<Suspense");
+    expect(page).toContain("validateRhemaParentOrigin(");
+  });
+});
