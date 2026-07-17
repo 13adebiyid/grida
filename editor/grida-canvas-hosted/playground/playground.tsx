@@ -50,6 +50,7 @@ import {
   buildLocalWebfontItems,
   withMissingFamilyFallbacks,
 } from "./bible-helper-local-fonts";
+import { suppressImportedContentMarkings } from "./rhema-import-normalizers";
 import {
   PlusIcon,
   Cross1Icon,
@@ -1526,10 +1527,14 @@ export default function CanvasPlayground({
                 }
               }
 
+              const documentForEditor =
+                profile === "bible-helper"
+                  ? suppressImportedContentMarkings(loadedDocument)
+                  : loadedDocument;
               instance.commands.reset(
                 editor.state.init({
                   editable: true,
-                  document: loadedDocument,
+                  document: documentForEditor,
                 }),
                 "opfs"
               );
@@ -1617,10 +1622,13 @@ export default function CanvasPlayground({
                   const ref = base.includes(".") ? base.split(".")[0]! : base;
                   seedImages[ref] = bytes;
                 }
+                const documentForEditor = suppressImportedContentMarkings(
+                  snapshot.document
+                );
                 instance.commands.reset(
                   editor.state.init({
                     editable: true,
-                    document: snapshot.document as Parameters<
+                    document: documentForEditor as Parameters<
                       typeof editor.state.init
                     >[0]["document"],
                   }),
