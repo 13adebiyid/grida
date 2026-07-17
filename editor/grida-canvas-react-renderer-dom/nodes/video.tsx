@@ -101,6 +101,7 @@ export const VideoWidget = ({
           loop={loop && (trim_end_seconds ?? -1) < 0}
           muted={muted}
           autoPlay={autoplay}
+          preload="auto"
           playsInline
           style={{
             width: "100%",

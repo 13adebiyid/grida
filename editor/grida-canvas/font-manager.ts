@@ -19,6 +19,16 @@ export class DocumentFontManager {
         this.sync(v);
       }
     );
+
+    // Native documents can arrive before the host-provided local font catalog.
+    // Retry the unchanged document font requirements when that registry is
+    // hydrated instead of leaving the document on fallback fonts forever.
+    this.editor.doc.subscribeWithSelector(
+      (state) => state.webfontlist,
+      () => {
+        this.sync(this.editor.doc.state.fontfaces);
+      }
+    );
   }
 
   private sync(keys: editor.state.FontFaceDescription[]) {
