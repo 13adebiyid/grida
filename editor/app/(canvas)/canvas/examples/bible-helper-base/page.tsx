@@ -33,6 +33,9 @@ function BibleHelperBaseInner() {
   // immediately instead of prompting (the host banner IS the prompt).
   // Never persisted into stored editor URLs by the host.
   const restoreDraft = params.get("bhRestoreDraft");
+  // Canonical native imports already carry the complete multi-scene document.
+  // Their bundle save never needs per-scene compatibility SVG exports.
+  const canonicalNativeDocument = params.get("nativeDocument") === "1";
 
   const roomId =
     typeof room === "string" && room.trim() ? room.trim() : "default";
@@ -85,6 +88,7 @@ function BibleHelperBaseInner() {
         workspace={workspaceMode}
         filekey={`${filekeyPrefix}-${roomId}`}
         restoreDraftOnBoot={restoreDraft === "1"}
+        canonicalNativeDocument={canonicalNativeDocument}
       />
     </main>
   );

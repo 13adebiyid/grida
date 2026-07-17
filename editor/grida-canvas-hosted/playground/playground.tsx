@@ -48,6 +48,7 @@ import {
   BIBLE_HELPER_LIST_SYSTEM_FONTS_REQUEST,
   BIBLE_HELPER_LIST_SYSTEM_FONTS_RESULT,
   buildLocalWebfontItems,
+  withMissingFamilyFallbacks,
 } from "./bible-helper-local-fonts";
 import {
   PlusIcon,
@@ -658,6 +659,9 @@ export type CanvasPlaygroundProps = {
    * host-side notification already was the prompt. No draft → no-op.
    */
   restoreDraftOnBoot?: boolean;
+  /** Native ProPresenter import: save the canonical document once and skip
+   *  per-scene compatibility SVG export/load traversal. */
+  canonicalNativeDocument?: boolean;
 } & Partial<UserCustomTemplatesProps>;
 
 export default function CanvasPlayground({
@@ -674,6 +678,7 @@ export default function CanvasPlayground({
   parentOrigin,
   workspace = "theme",
   restoreDraftOnBoot = false,
+  canonicalNativeDocument = false,
 }: CanvasPlaygroundProps) {
   // Determine filekey: explicit prop > auto-generated from src > default "current"
   const resolvedFilekey = useMemo(() => {
@@ -689,10 +694,19 @@ export default function CanvasPlayground({
     profile === "bible-helper" ? undefined : room_id
   );
   const fonts = useEditorState(instance, (state) => state.webfontlist.items);
+  const requiredFontFamiliesKey = useEditorState(instance, (state) =>
+    Array.from(new Set(state.fontfaces.map((face) => face.family.trim())))
+      .filter(Boolean)
+      .sort()
+      .join("\u0000")
+  );
   // Bible Helper: the operator's INSTALLED fonts, fetched from the host and
   // merged into the webfont registry so they appear in the picker AND load
   // through the existing pipeline (getFontItem → fetch(files[v]) → addFont).
   const localFontItemsRef = useRef<ReturnType<typeof buildLocalWebfontItems>>(
+    []
+  );
+  const systemFontItemsRef = useRef<ReturnType<typeof buildLocalWebfontItems>>(
     []
   );
   const [localFontFamilies, setLocalFontFamilies] = useState<Set<string>>(
@@ -1019,10 +1033,15 @@ export default function CanvasPlayground({
       if (e.origin !== parentOrigin || e.source !== window.parent) return;
       const d = e.data as { type?: unknown; fonts?: unknown } | null;
       if (!d || d.type !== BIBLE_HELPER_LIST_SYSTEM_FONTS_RESULT) return;
-      const items = buildLocalWebfontItems(d.fonts);
-      if (items.length > 0) {
+      const systemItems = buildLocalWebfontItems(d.fonts);
+      if (systemItems.length > 0) {
+        systemFontItemsRef.current = systemItems;
+        const items = withMissingFamilyFallbacks(
+          systemItems,
+          instance.doc.state.fontfaces.map((face) => face.family)
+        );
         localFontItemsRef.current = items;
-        setLocalFontFamilies(new Set(items.map((i) => i.family)));
+        setLocalFontFamilies(new Set(items.map((item) => item.family)));
       }
       setSystemFontCatalogReceived(true);
     };
@@ -1032,7 +1051,21 @@ export default function CanvasPlayground({
       parentOrigin
     );
     return () => window.removeEventListener("message", onMessage);
-  }, [profile, parentOrigin]);
+  }, [profile, parentOrigin, instance]);
+
+  // The font catalog may arrive before the native document. Rebuild aliases
+  // whenever that document declares a new family, without another host round
+  // trip and without replacing any installed face.
+  useEffect(() => {
+    const systemItems = systemFontItemsRef.current;
+    if (profile !== "bible-helper" || systemItems.length === 0) return;
+    const items = withMissingFamilyFallbacks(
+      systemItems,
+      requiredFontFamiliesKey ? requiredFontFamiliesKey.split("\u0000") : []
+    );
+    localFontItemsRef.current = items;
+    setLocalFontFamilies(new Set(items.map((item) => item.family)));
+  }, [profile, requiredFontFamiliesKey]);
 
   // Merge the local font items into the webfont registry. Re-runs whenever the
   // registry changes — so after the async Google-fonts warmup REPLACES the list
@@ -1815,6 +1848,7 @@ export default function CanvasPlayground({
                             runProgrammaticEdit={runProgrammaticEdit}
                             currentSceneHasVideo={currentSceneHasVideo}
                             externalAssetUrls={externalAssetUrls}
+                            canonicalNativeDocument={canonicalNativeDocument}
                           />
                         </StarterKitOrgIdProvider>
                       </UserCustomTemplatesProvider>
@@ -1842,6 +1876,7 @@ function Consumer({
   runProgrammaticEdit,
   currentSceneHasVideo,
   externalAssetUrls,
+  canonicalNativeDocument,
 }: {
   backend: "dom" | "canvas";
   canvasRef?: (canvas: HTMLCanvasElement | null) => void;
@@ -1862,6 +1897,7 @@ function Consumer({
   runProgrammaticEdit: (fn: () => void) => void;
   currentSceneHasVideo: boolean;
   externalAssetUrls: Readonly<Record<string, string>>;
+  canonicalNativeDocument: boolean;
 }) {
   const isBibleHelper = profile === "bible-helper";
   const {
@@ -2267,6 +2303,7 @@ function Consumer({
                         workspace={workspace}
                         runProgrammaticEdit={runProgrammaticEdit}
                         onSaved={onSaved}
+                        canonicalNativeDocument={canonicalNativeDocument}
                       />
                     )}
                     <EditorSurfaceClipboardSyncProvider />
@@ -2803,6 +2840,7 @@ function SidebarLeft({
   workspace = "theme",
   runProgrammaticEdit = (fn) => fn(),
   onSaved,
+  canonicalNativeDocument = false,
 }: {
   toggleVisibility?: () => void;
   toggleMinimal?: () => void;
@@ -2831,6 +2869,9 @@ function SidebarLeft({
    *  still asked "Exit without saving?" after a saved bundle AND offered a
    *  stale crash-restore at next boot (2026-07-07 report, item 6). */
   onSaved?: () => void;
+  /** Canonical imports save one document snapshot; compat backdrop SVGs are
+   *  retained by the host instead of regenerated scene-by-scene. */
+  canonicalNativeDocument?: boolean;
 }) {
   const editor = useCurrentEditor();
   const {
@@ -3177,6 +3218,11 @@ function SidebarLeft({
     const layouts: ReturnType<typeof buildRhemaThemeRuntimeJson>[] = [];
     for (const sid of sceneIdsSnapshot) {
       const payload = buildRhemaThemeRuntimeJson(editor.state.document, sid);
+      if (canonicalNativeDocument) {
+        payload.backdropSvg = null;
+        layouts.push(payload);
+        continue;
+      }
       // Resolve this scene's stage node so we can export its SVG. Scene
       // userData (rhema_stage_node_id) points at it; fall back to the
       // first child container.
@@ -3236,6 +3282,7 @@ function SidebarLeft({
     // Restore original active scene so the operator's editor view doesn't
     // jump unexpectedly after Save Theme Bundle.
     if (
+      !canonicalNativeDocument &&
       originalActiveSceneId &&
       originalActiveSceneId !== editor.state.scene_id
     ) {
@@ -3307,6 +3354,7 @@ function SidebarLeft({
     workspace,
     parentOrigin,
     onSaved,
+    canonicalNativeDocument,
   ]);
 
   /** Set the workspace ("theme" or "stage") on the active scene. */

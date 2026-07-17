@@ -76,6 +76,43 @@ export function buildLocalWebfontItems(
   return out;
 }
 
+/**
+ * The browser output uses the CSS font stack: if an imported ProPresenter
+ * family is not installed, it falls back to the platform serif face. The WASM
+ * canvas cannot perform that OS fallback because it only renders registered
+ * bytes. Alias the same local serif bytes under each missing document family
+ * so editor and output remain visually consistent. Installed source families
+ * always win and are never replaced.
+ */
+export function withMissingFamilyFallbacks(
+  items: ReadonlyArray<GoogleWebFontListItem>,
+  requiredFamilies: ReadonlyArray<string>,
+  preferredFallbacks: ReadonlyArray<string> = ["Times New Roman", "Times"]
+): GoogleWebFontListItem[] {
+  const out = [...items];
+  const present = new Set(items.map((item) => item.family.toLocaleLowerCase()));
+  const fallback = preferredFallbacks
+    .map((family) =>
+      items.find(
+        (item) => item.family.toLocaleLowerCase() === family.toLocaleLowerCase()
+      )
+    )
+    .find((item): item is GoogleWebFontListItem => item !== undefined);
+  if (!fallback) return out;
+  for (const rawFamily of requiredFamilies) {
+    const family = rawFamily.trim();
+    const key = family.toLocaleLowerCase();
+    if (!family || present.has(key)) continue;
+    out.push({
+      ...fallback,
+      family,
+      version: `local-fallback:${fallback.family}`,
+    });
+    present.add(key);
+  }
+  return out;
+}
+
 /** The best file url to preview a local family with (regular weight, else the
  *  first available face). Null when none. */
 export function localPreviewUrl(
