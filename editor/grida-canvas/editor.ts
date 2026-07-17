@@ -3046,6 +3046,11 @@ export class Editor
 
   private _m_wasm_canvas_scene: Scene | null = null;
   private _m_wasm_canvas_resize_observer: ResizeObserver | null = null;
+  /** An auto scene-fit ran while the viewport had no real size (hidden or
+   * pre-layout host): `transformToFit` degenerates to identity then and
+   * nothing else refits — the document opens stuck at the top-left corner
+   * at 1:1 zoom. The resize observer retries once the viewport is real. */
+  private _m_pending_scene_refit = false;
   private _disposed = false;
 
   /**
@@ -3774,6 +3779,13 @@ export class Editor
               el.width,
               el.height
             );
+            // A degenerate-viewport auto-fit retries on the first real
+            // layout — without this a document opened in a hidden/sizing
+            // host stays at identity zoom in the top-left corner forever.
+            if (this._m_pending_scene_refit) {
+              const { width, height } = this.camera.viewport.size;
+              if (width > 128 && height > 128) this.__auto_fit_scene();
+            }
           }
         }
       });
@@ -3806,7 +3818,7 @@ export class Editor
         el.width,
         el.height
       );
-      this.camera.fit("<scene>");
+      this.__auto_fit_scene();
 
       this.doc.subscribeWithSelector(
         (state) => state.transform,
@@ -3815,6 +3827,18 @@ export class Editor
         }
       );
     });
+  }
+
+  /**
+   * Fit the camera to the scene, remembering when the viewport wasn't laid
+   * out yet. `transformToFit` needs a positive effective view (size minus
+   * the 64px default margins); anything smaller returns identity and the
+   * fit would silently never happen again (see `_m_pending_scene_refit`).
+   */
+  private __auto_fit_scene(): void {
+    const { width, height } = this.camera.viewport.size;
+    this._m_pending_scene_refit = !(width > 128 && height > 128);
+    this.camera.fit("<scene>");
   }
 
   /**
@@ -3896,7 +3920,7 @@ export class Editor
     // `document/reset` rebinds scene identity; always full re-encode + refit.
     if (action?.type === "document/reset") {
       fullSync();
-      this.camera.fit("<scene>");
+      this.__auto_fit_scene();
       end();
       return;
     }

@@ -288,7 +288,12 @@ function __self_try_enter_content_edit_mode_auto(
   const node = dq.__getNodeById(draft, node_id);
 
   switch (node.type) {
-    case "tspan": {
+    case "tspan":
+    // Attributed text (multi-run styled): the wasm text-edit engine supports
+    // it end-to-end (ActiveTextEdit::new_attributed + attributed commit).
+    // Without this case, double-clicking imported ProPresenter mixed-style
+    // text silently did nothing (WP6 symptom: dead double-click text edit).
+    case "text": {
       // the text node should have a string literal value assigned (we don't support props editing via surface)
       if (typeof node.text !== "string") return;
 

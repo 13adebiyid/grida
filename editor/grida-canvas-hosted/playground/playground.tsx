@@ -789,10 +789,24 @@ export default function CanvasPlayground({
     const pending = new Set<string>();
     const retryAfter = new Map<string, number>();
     const abort = new AbortController();
-    instance.onUnresolvedImages = (refs) => {
+    instance.onUnresolvedImages = (rids) => {
       const repository = instance.state.document.external_assets ?? {};
       const now = Date.now();
-      const wanted = refs.filter(
+      // The renderer reports full RIDs ("res://images/<digest>") while
+      // external_assets and the host protocol are keyed by the bare CAS
+      // digest — without this normalization no imported image was ever
+      // requested from the host and native documents rendered their image
+      // regions empty (WP6 symptom: pictures invisible while editing).
+      // loadImages() re-applies the RID prefix, so bare refs go back in.
+      const wanted = [
+        ...new Set(
+          rids.map((rid) =>
+            rid.startsWith("res://images/")
+              ? rid.slice("res://images/".length)
+              : rid
+          )
+        ),
+      ].filter(
         (ref) =>
           repository[ref]?.kind === "image" &&
           !pending.has(ref) &&
@@ -1781,12 +1795,28 @@ function Consumer({
     const stageNode = instance.state.document.nodes[sceneMeta.stageId];
     if (!isRhemaStageCandidate(stageNode)) return;
 
+    // Imported native documents keep their SOURCE stage size: the compiler
+    // names the stage container "Canvas <w>x<h>" from the presentation's
+    // real resolution (e.g. 2560x1440 booth decks). Forcing those to
+    // 1920x1080 shrank the clipping stage under the imported coordinates —
+    // layers overflowed, were clipped, and became unhittable (WP6 symptoms:
+    // doesn't fit / immovable shapes). Authored stages (exactly
+    // RHEMA_STAGE_NAME) keep the original 1920x1080 healing behavior.
+    const importedStageDims = /^Canvas (\d+)x(\d+)$/.exec(
+      stageNode.name ?? ""
+    );
+    const importedWidth = importedStageDims ? Number(importedStageDims[1]) : NaN;
+    const importedHeight = importedStageDims ? Number(importedStageDims[2]) : NaN;
+    const useImportedDims = importedWidth >= 1280 && importedHeight >= 720;
+    const stageWidth = useImportedDims ? importedWidth : RHEMA_STAGE_WIDTH;
+    const stageHeight = useImportedDims ? importedHeight : RHEMA_STAGE_HEIGHT;
+
     const needsPositioningUpdate =
       stageNode.layout_positioning !== "absolute" ||
       stageNode.layout_inset_left !== 0 ||
       stageNode.layout_inset_top !== 0 ||
-      stageNode.layout_target_width !== RHEMA_STAGE_WIDTH ||
-      stageNode.layout_target_height !== RHEMA_STAGE_HEIGHT;
+      stageNode.layout_target_width !== stageWidth ||
+      stageNode.layout_target_height !== stageHeight;
 
     const stageId = sceneMeta.stageId;
     if (needsPositioningUpdate) {
@@ -1796,8 +1826,8 @@ function Consumer({
           layout_inset_left: 0,
           layout_inset_top: 0,
         });
-        instance.commands.changeNodeSize(stageId, "width", RHEMA_STAGE_WIDTH);
-        instance.commands.changeNodeSize(stageId, "height", RHEMA_STAGE_HEIGHT);
+        instance.commands.changeNodeSize(stageId, "width", stageWidth);
+        instance.commands.changeNodeSize(stageId, "height", stageHeight);
       });
     }
 

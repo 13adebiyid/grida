@@ -843,9 +843,22 @@ const safe_properties: Record<string, SafePropertyHandler<never>> = {
     },
   }),
   text: defineNodeProperty<"text">({
-    assert: (node) => node.type === "tspan",
-    apply: (draft, value) => {
+    assert: (node) => node.type === "tspan" || node.type === "text",
+    apply: (draft, value, prev) => {
       (draft as UN).text = value ?? null;
+      // Attributed nodes ("text"): styled-run offsets describe the PREVIOUS
+      // characters. A plain-text commit (surface text editor exit) must not
+      // leave stale offsets in the document — the node renders and saves
+      // through its default style instead (dominant-style policy, same as
+      // the importer's fallback and the live override render path).
+      if (
+        (draft as UN).type === "text" &&
+        value !== prev &&
+        Array.isArray((draft as UN).styled_runs) &&
+        ((draft as UN).styled_runs as unknown[]).length > 0
+      ) {
+        (draft as UN).styled_runs = [];
+      }
     },
   }),
 };
