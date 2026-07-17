@@ -4684,6 +4684,11 @@ export class Editor
     return item;
   }
 
+  /** Wait for the current document's required font families to finish loading. */
+  async loadDocumentFontsSync(): Promise<void> {
+    await this._fontManager.ensureRequiredFontsLoaded();
+  }
+
   /**
    * Loads all font faces for a given family and extracts details once every
    * face is available. This method fetches all font files first and then runs

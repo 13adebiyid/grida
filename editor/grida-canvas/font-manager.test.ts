@@ -3,7 +3,7 @@ import type { Editor } from "./editor";
 import { DocumentFontManager } from "./font-manager";
 
 describe("DocumentFontManager", () => {
-  test("retries document fonts when the host font registry is hydrated", () => {
+  test("retries document fonts when the host font registry is hydrated", async () => {
     const subscribers: Array<(doc: unknown, selectedValue: unknown) => void> =
       [];
     const loadFontSync = vi.fn<(font: { family: string }) => Promise<void>>(
@@ -28,10 +28,11 @@ describe("DocumentFontManager", () => {
       loadFontSync,
     } as unknown as Editor;
 
-    void new DocumentFontManager(instance);
+    const manager = new DocumentFontManager(instance);
     expect(subscribers).toHaveLength(2);
 
     subscribers[1](doc, doc.state.webfontlist);
+    await manager.ensureRequiredFontsLoaded();
 
     expect(loadFontSync).toHaveBeenCalledTimes(1);
     expect(loadFontSync).toHaveBeenCalledWith({ family: "Avenir Next" });

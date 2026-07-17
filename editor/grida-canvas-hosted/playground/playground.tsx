@@ -186,6 +186,12 @@ import {
   fetchVerifiedExternalAsset,
   requestExternalAssetLocations,
 } from "./rhema-external-assets";
+import {
+  collectSceneExternalAssetRefs,
+  collectSceneExternalImageRefs,
+  EDITOR_OPEN_READINESS_TIMEOUT_MS,
+  isEditorOpenReady,
+} from "./rhema-editor-readiness";
 import { STAGE_COMPONENTS } from "./stage-components";
 import { StageComponentsToolbar } from "./stage-toolbar";
 import { STAGE_TEMPLATES } from "./stage-templates";
@@ -735,6 +741,12 @@ export default function CanvasPlayground({
   );
   const [errmsg, setErrmsg] = useState<string | null>(null);
   const [loadingOverlay, setLoadingOverlay] = useState(true);
+  const [systemFontCatalogReceived, setSystemFontCatalogReceived] =
+    useState(false);
+  const [fontCatalogSettled, setFontCatalogSettled] = useState(false);
+  const [assetLocationsSettled, setAssetLocationsSettled] = useState(false);
+  const [initialImagesSettled, setInitialImagesSettled] = useState(false);
+  const [readinessTimedOut, setReadinessTimedOut] = useState(false);
   const [externalAssetUrls, setExternalAssetUrls] = useState<
     Record<string, string>
   >({});
@@ -744,6 +756,12 @@ export default function CanvasPlayground({
       .map(([ref]) => ref)
       .sort()
       .join(",")
+  );
+  const currentSceneExternalImageRefsKey = useEditorState(instance, (state) =>
+    collectSceneExternalImageRefs(state.document, state.scene_id).join(",")
+  );
+  const currentSceneExternalAssetRefsKey = useEditorState(instance, (state) =>
+    collectSceneExternalAssetRefs(state.document, state.scene_id).join(",")
   );
   const currentSceneHasVideo = useEditorState(instance, (state) => {
     if (!state.scene_id) return false;
@@ -783,13 +801,40 @@ export default function CanvasPlayground({
 
   // Native documents refer to imported images by CAS digest. The renderer
   // reports missing refs; the host returns only read-only rhema-local URLs.
+  // Hydrate the current scene before dismissing the opening overlay, then keep
+  // the same callback as a retry path for later scenes and transient failures.
   // Verify both size and SHA-256 before registering bytes in the WASM cache.
   useEffect(() => {
-    if (profile !== "bible-helper" || !parentOrigin || !canvasReady) return;
+    const hostHydrationRequired =
+      profile === "bible-helper" && Boolean(parentOrigin);
+    if (
+      !hostHydrationRequired ||
+      !parentOrigin ||
+      !documentReady ||
+      !canvasReady
+    ) {
+      setInitialImagesSettled(!hostHydrationRequired);
+      return;
+    }
     const pending = new Set<string>();
+    const hydrated = new Set<string>();
     const retryAfter = new Map<string, number>();
     const abort = new AbortController();
-    instance.onUnresolvedImages = (rids) => {
+    let cancelled = false;
+    const initialRefs = currentSceneExternalImageRefsKey
+      ? currentSceneExternalImageRefsKey.split(",")
+      : [];
+    const initialRefSet = new Set(initialRefs);
+    setInitialImagesSettled(initialRefs.length === 0);
+
+    const updateInitialReadiness = () => {
+      if (cancelled) return;
+      if ([...initialRefSet].every((ref) => hydrated.has(ref))) {
+        setInitialImagesSettled(true);
+      }
+    };
+
+    const hydrate = async (rids: readonly string[]) => {
       const repository = instance.state.document.external_assets ?? {};
       const now = Date.now();
       // The renderer reports full RIDs ("res://images/<digest>") while
@@ -809,104 +854,177 @@ export default function CanvasPlayground({
       ].filter(
         (ref) =>
           repository[ref]?.kind === "image" &&
+          !hydrated.has(ref) &&
           !pending.has(ref) &&
           (retryAfter.get(ref) ?? 0) <= now
       );
-      if (wanted.length === 0) return;
+      if (wanted.length === 0) {
+        updateInitialReadiness();
+        return;
+      }
       for (const ref of wanted) pending.add(ref);
-      void (async () => {
-        try {
-          const locations = await requestExternalAssetLocations(
-            parentOrigin,
-            wanted
-          );
-          const loaded: Record<string, Uint8Array> = {};
-          await Promise.all(
-            locations.map(async (location) => {
-              try {
-                loaded[location.ref] = await fetchVerifiedExternalAsset(
-                  location,
-                  abort.signal
-                );
-              } catch (error) {
-                retryAfter.set(location.ref, Date.now() + 5000);
-                console.warn(
-                  `[rhema-assets] failed to hydrate ${location.ref.slice(0, 12)}`,
-                  error
-                );
-              }
-            })
-          );
-          if (!abort.signal.aborted && Object.keys(loaded).length > 0) {
-            instance.loadImages(loaded);
-          }
-          const resolved = new Set(locations.map((item) => item.ref));
-          for (const ref of wanted) {
-            if (!resolved.has(ref)) retryAfter.set(ref, Date.now() + 5000);
-          }
-        } finally {
-          for (const ref of wanted) pending.delete(ref);
+      try {
+        const locations = await requestExternalAssetLocations(
+          parentOrigin,
+          wanted
+        );
+        const loaded: Record<string, Uint8Array> = {};
+        await Promise.all(
+          locations.map(async (location) => {
+            try {
+              loaded[location.ref] = await fetchVerifiedExternalAsset(
+                location,
+                abort.signal
+              );
+            } catch (error) {
+              retryAfter.set(location.ref, Date.now() + 5000);
+              console.warn(
+                `[rhema-assets] failed to hydrate ${location.ref.slice(0, 12)}`,
+                error
+              );
+            }
+          })
+        );
+        if (!abort.signal.aborted && Object.keys(loaded).length > 0) {
+          instance.loadImages(loaded);
+          Object.keys(loaded).forEach((ref) => hydrated.add(ref));
         }
-      })();
+        const resolved = new Set(locations.map((item) => item.ref));
+        for (const ref of wanted) {
+          if (!resolved.has(ref)) retryAfter.set(ref, Date.now() + 5000);
+        }
+      } finally {
+        for (const ref of wanted) pending.delete(ref);
+        updateInitialReadiness();
+      }
     };
+
+    instance.onUnresolvedImages = (rids) => {
+      void hydrate(rids).catch((error) => {
+        console.warn("[rhema-assets] image hydration failed", error);
+      });
+    };
+    if (initialRefs.length > 0) {
+      void hydrate(initialRefs).catch((error) => {
+        console.warn("[rhema-assets] initial image hydration failed", error);
+      });
+    }
     return () => {
+      cancelled = true;
       abort.abort();
       instance.onUnresolvedImages = null;
     };
-  }, [canvasReady, instance, parentOrigin, profile]);
+  }, [
+    canvasReady,
+    currentSceneExternalImageRefsKey,
+    documentReady,
+    instance,
+    parentOrigin,
+    profile,
+  ]);
 
   // The browser owns native video playback while the WASM surface continues
   // to own hit-testing, selection and document mutation. Resolve CAS digests
   // through the same host allow-list used for images; the canonical document
   // remains portable and never receives a machine-local path.
   useEffect(() => {
-    if (
-      profile !== "bible-helper" ||
-      !parentOrigin ||
-      !documentReady ||
-      !externalAssetRefsKey
-    ) {
+    const hostHydrationRequired =
+      profile === "bible-helper" && Boolean(parentOrigin);
+    if (!hostHydrationRequired || !parentOrigin) {
       setExternalAssetUrls({});
+      setAssetLocationsSettled(true);
+      return;
+    }
+    if (!documentReady) {
+      setExternalAssetUrls({});
+      setAssetLocationsSettled(false);
+      return;
+    }
+    if (!externalAssetRefsKey) {
+      setExternalAssetUrls({});
+      setAssetLocationsSettled(true);
       return;
     }
     let cancelled = false;
+    let retryTimer: number | null = null;
     const refs = externalAssetRefsKey.split(",");
-    void (async () => {
-      const batches: string[][] = [];
-      for (let i = 0; i < refs.length; i += 64) {
-        batches.push(refs.slice(i, i + 64));
-      }
-      const locations = (
-        await Promise.all(
-          batches.map((batch) =>
-            requestExternalAssetLocations(parentOrigin, batch)
+    const currentSceneRefs = currentSceneExternalAssetRefsKey
+      ? currentSceneExternalAssetRefsKey.split(",")
+      : [];
+    const resolvedLocations = new Map<string, string>();
+    setAssetLocationsSettled(currentSceneRefs.length === 0);
+
+    const resolve = () => {
+      void (async () => {
+        const batches: string[][] = [];
+        for (let i = 0; i < refs.length; i += 64) {
+          batches.push(refs.slice(i, i + 64));
+        }
+        const locations = (
+          await Promise.all(
+            batches.map((batch) =>
+              requestExternalAssetLocations(parentOrigin, batch)
+            )
           )
-        )
-      ).flat();
-      if (cancelled) return;
-      setExternalAssetUrls(
-        Object.fromEntries(locations.map((item) => [item.ref, item.url]))
-      );
-    })();
+        ).flat();
+        if (cancelled) return;
+        locations.forEach((item) => resolvedLocations.set(item.ref, item.url));
+        setExternalAssetUrls(Object.fromEntries(resolvedLocations));
+        const currentSceneResolved = currentSceneRefs.every((ref) =>
+          resolvedLocations.has(ref)
+        );
+        setAssetLocationsSettled(currentSceneResolved);
+        if (!currentSceneResolved) {
+          retryTimer = window.setTimeout(
+            resolve,
+            EDITOR_OPEN_READINESS_TIMEOUT_MS
+          );
+        }
+      })().catch((error) => {
+        if (!cancelled) {
+          console.warn("[rhema-assets] initial asset resolution failed", error);
+          if (currentSceneRefs.length > 0) {
+            retryTimer = window.setTimeout(
+              resolve,
+              EDITOR_OPEN_READINESS_TIMEOUT_MS
+            );
+          }
+        }
+      });
+    };
+    resolve();
     return () => {
       cancelled = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
-  }, [documentReady, externalAssetRefsKey, parentOrigin, profile]);
+  }, [
+    currentSceneExternalAssetRefsKey,
+    documentReady,
+    externalAssetRefsKey,
+    parentOrigin,
+    profile,
+  ]);
 
   // Editor → host: ask for the operator's installed fonts, then keep them in a
   // ref + a family-name set (the latter tells the picker to render a local CSS
   // preview instead of the Google preview image). Requested once on mount.
   useEffect(() => {
-    if (profile !== "bible-helper" || !parentOrigin) return;
+    if (profile !== "bible-helper" || !parentOrigin) {
+      setSystemFontCatalogReceived(true);
+      return;
+    }
     if (typeof window === "undefined" || window.parent === window) return;
+    setSystemFontCatalogReceived(false);
     const onMessage = (e: MessageEvent) => {
       if (e.origin !== parentOrigin || e.source !== window.parent) return;
       const d = e.data as { type?: unknown; fonts?: unknown } | null;
       if (!d || d.type !== BIBLE_HELPER_LIST_SYSTEM_FONTS_RESULT) return;
       const items = buildLocalWebfontItems(d.fonts);
-      if (items.length === 0) return;
-      localFontItemsRef.current = items;
-      setLocalFontFamilies(new Set(items.map((i) => i.family)));
+      if (items.length > 0) {
+        localFontItemsRef.current = items;
+        setLocalFontFamilies(new Set(items.map((i) => i.family)));
+      }
+      setSystemFontCatalogReceived(true);
     };
     window.addEventListener("message", onMessage);
     window.parent.postMessage(
@@ -935,6 +1053,47 @@ export default function CanvasPlayground({
       },
     });
   }, [fonts, localFontFamilies, profile, instance]);
+
+  // The registry response alone is not enough: wait for the document's exact
+  // font families to finish loading into the canvas backend. The font manager
+  // deduplicates this call with its normal registry-change retry.
+  useEffect(() => {
+    const hostHydrationRequired =
+      profile === "bible-helper" && Boolean(parentOrigin);
+    if (!hostHydrationRequired) {
+      setFontCatalogSettled(true);
+      return;
+    }
+    if (!documentReady || !systemFontCatalogReceived) {
+      setFontCatalogSettled(false);
+      return;
+    }
+    let cancelled = false;
+    setFontCatalogSettled(false);
+    void instance
+      .loadDocumentFontsSync()
+      .then(() => {
+        if (!cancelled) setFontCatalogSettled(true);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn(
+            "[rhema-fonts] initial document font load failed",
+            error
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    documentReady,
+    fonts,
+    instance,
+    parentOrigin,
+    profile,
+    systemFontCatalogReceived,
+  ]);
 
   // Crash-restore (item 6a): OPFS is written ONLY on explicit Save, so a crash
   // before saving loses the work. Debounce-write the live document to a SEPARATE
@@ -1591,7 +1750,34 @@ export default function CanvasPlayground({
     };
   }, [pendingSeedBackdrop, canvasReady, instance]);
 
-  const ready = documentReady && canvasReady;
+  // The overlay is a readiness gate, not an artificial delay. It stays up
+  // while the host resolves the first scene, but a missing/corrupt resource
+  // can never trap the operator: the normal retry paths continue after this
+  // bounded deadline.
+  useEffect(() => {
+    const hostHydrationRequired =
+      profile === "bible-helper" && Boolean(parentOrigin);
+    if (!hostHydrationRequired || !documentReady || !canvasReady) {
+      setReadinessTimedOut(false);
+      return;
+    }
+    setReadinessTimedOut(false);
+    const timer = window.setTimeout(
+      () => setReadinessTimedOut(true),
+      EDITOR_OPEN_READINESS_TIMEOUT_MS
+    );
+    return () => window.clearTimeout(timer);
+  }, [canvasReady, documentReady, parentOrigin, profile]);
+
+  const ready = isEditorOpenReady({
+    documentReady,
+    canvasReady,
+    hostHydrationRequired: profile === "bible-helper" && Boolean(parentOrigin),
+    fontCatalogSettled,
+    assetLocationsSettled,
+    initialImagesSettled,
+    timedOut: readinessTimedOut,
+  });
 
   return (
     <>
@@ -1802,11 +1988,13 @@ function Consumer({
     // layers overflowed, were clipped, and became unhittable (WP6 symptoms:
     // doesn't fit / immovable shapes). Authored stages (exactly
     // RHEMA_STAGE_NAME) keep the original 1920x1080 healing behavior.
-    const importedStageDims = /^Canvas (\d+)x(\d+)$/.exec(
-      stageNode.name ?? ""
-    );
-    const importedWidth = importedStageDims ? Number(importedStageDims[1]) : NaN;
-    const importedHeight = importedStageDims ? Number(importedStageDims[2]) : NaN;
+    const importedStageDims = /^Canvas (\d+)x(\d+)$/.exec(stageNode.name ?? "");
+    const importedWidth = importedStageDims
+      ? Number(importedStageDims[1])
+      : NaN;
+    const importedHeight = importedStageDims
+      ? Number(importedStageDims[2])
+      : NaN;
     const useImportedDims = importedWidth >= 1280 && importedHeight >= 720;
     const stageWidth = useImportedDims ? importedWidth : RHEMA_STAGE_WIDTH;
     const stageHeight = useImportedDims ? importedHeight : RHEMA_STAGE_HEIGHT;

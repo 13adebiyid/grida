@@ -10,13 +10,14 @@ export class DocumentFontManager {
     string,
     editor.font_spec.UIFontFamily
   >();
+  private __pending_family_loads = new Map<string, Promise<void>>();
 
   constructor(private editor: Editor) {
     // watch for font registry changes
     this.editor.doc.subscribeWithSelector(
       (state) => state.fontfaces,
       (_, v) => {
-        this.sync(v);
+        void this.sync(v).catch(() => undefined);
       }
     );
 
@@ -26,17 +27,36 @@ export class DocumentFontManager {
     this.editor.doc.subscribeWithSelector(
       (state) => state.webfontlist,
       () => {
-        this.sync(this.editor.doc.state.fontfaces);
+        void this.sync(this.editor.doc.state.fontfaces).catch(() => undefined);
       }
     );
   }
 
-  private sync(keys: editor.state.FontFaceDescription[]) {
-    const loaded = new Set(this.editor.listLoadedFonts());
-    for (const { family } of keys) {
-      if (loaded.has(family)) continue;
-      void this.editor.loadFontSync({ family });
+  private loadFamily(family: string): Promise<void> {
+    if (this.editor.listLoadedFonts().includes(family)) {
+      return Promise.resolve();
     }
+    const pending = this.__pending_family_loads.get(family);
+    if (pending) return pending;
+    const request = this.editor
+      .loadFontSync({ family })
+      .finally(() => this.__pending_family_loads.delete(family));
+    this.__pending_family_loads.set(family, request);
+    return request;
+  }
+
+  private async sync(keys: editor.state.FontFaceDescription[]): Promise<void> {
+    const loaded = new Set(this.editor.listLoadedFonts());
+    await Promise.all(
+      keys
+        .filter(({ family }) => !loaded.has(family))
+        .map(({ family }) => this.loadFamily(family))
+    );
+  }
+
+  /** Wait until every font required by the current document has been attempted. */
+  public async ensureRequiredFontsLoaded(): Promise<void> {
+    await this.sync(this.editor.doc.state.fontfaces);
   }
 
   /**
