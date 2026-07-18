@@ -1084,6 +1084,24 @@ importers:
         specifier: workspace:*
         version: link:../grida-canvas-vn
 
+  packages/grida-live-scene-runtime:
+    dependencies:
+      '@grida/canvas-wasm':
+        specifier: workspace:*
+        version: link:../../crates/grida-canvas-wasm
+      '@grida/io':
+        specifier: workspace:*
+        version: link:../grida-canvas-io
+      '@grida/schema':
+        specifier: workspace:*
+        version: link:../grida-canvas-schema
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.2
+      flatbuffers:
+        specifier: ^25.9.23
+        version: 25.9.23
+
   packages/grida-native-document-compiler:
     dependencies:
       '@grida/animation':
