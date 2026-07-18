@@ -23,9 +23,18 @@ function attributedTextNode(
   text: string,
   styled_runs: Array<{ start: number; end: number; style: object }>
 ): grida.program.nodes.Node {
+  const base = textNode(id, text);
   return {
-    ...textNode(id, text),
+    ...base,
     type: "text",
+    default_style: {
+      font_family: base.font_family,
+      font_size: base.font_size,
+      font_weight: base.font_weight,
+      font_kerning: true,
+      text_decoration_line: "none",
+    },
+    fill_paints: [base.fill],
     styled_runs,
   } as unknown as grida.program.nodes.Node;
 }
@@ -79,14 +88,20 @@ describe("attributed text (type: 'text') editing", () => {
     });
   });
 
-  test("a plain-text commit drops stale styled runs from the document", () => {
+  test("a plain-text commit replaces stale styled runs with one valid dominant-style run", () => {
     ed.commands.changeNodePropertyText("attributed-1", "New words entirely");
     const node = ed.state.document.nodes["attributed-1"] as unknown as {
       text: string;
       styled_runs: unknown[];
     };
     expect(node.text).toBe("New words entirely");
-    expect(node.styled_runs).toEqual([]);
+    expect(node.styled_runs).toEqual([
+      {
+        start: 0,
+        end: "New words entirely".length,
+        style: (node as unknown as { default_style: unknown }).default_style,
+      },
+    ]);
   });
 
   test("an unchanged-text commit preserves styled runs", () => {

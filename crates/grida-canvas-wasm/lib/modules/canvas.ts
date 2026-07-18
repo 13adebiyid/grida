@@ -1194,10 +1194,33 @@ export class Scene {
     this.module._text_edit_pointer_down(this.appptr, x, y, shift, clickCount);
   }
 
+  /** Pointer down in canvas coordinates; the engine applies the native layer transform. */
+  textEditPointerDownCanvas(
+    x: number,
+    y: number,
+    shift: boolean,
+    clickCount: number
+  ): boolean {
+    this._assertAlive();
+    return !!this.module._text_edit_pointer_down_canvas(
+      this.appptr,
+      x,
+      y,
+      shift,
+      clickCount
+    );
+  }
+
   /** Pointer move in layout-local coordinates (during drag). */
   textEditPointerMove(x: number, y: number) {
     this._assertAlive();
     this.module._text_edit_pointer_move(this.appptr, x, y);
+  }
+
+  /** Pointer move in canvas coordinates during text selection drag. */
+  textEditPointerMoveCanvas(x: number, y: number): boolean {
+    this._assertAlive();
+    return !!this.module._text_edit_pointer_move_canvas(this.appptr, x, y);
   }
 
   /** Pointer up. */

@@ -235,6 +235,20 @@ pub(crate) unsafe extern "C" fn text_edit_pointer_down(
 }
 
 #[no_mangle]
+pub(crate) unsafe extern "C" fn text_edit_pointer_down_canvas(
+    app: *mut UnknownTargetApplication,
+    x: f32,
+    y: f32,
+    shift: bool,
+    click_count: u32,
+) -> bool {
+    let Some(app) = app.as_mut() else {
+        return false;
+    };
+    app.text_edit_pointer_down_canvas(x, y, shift, click_count)
+}
+
+#[no_mangle]
 pub(crate) unsafe extern "C" fn text_edit_pointer_move(
     app: *mut UnknownTargetApplication,
     x: f32,
@@ -242,6 +256,18 @@ pub(crate) unsafe extern "C" fn text_edit_pointer_move(
 ) {
     let Some(app) = app.as_mut() else { return };
     app.text_edit_pointer_move(x, y);
+}
+
+#[no_mangle]
+pub(crate) unsafe extern "C" fn text_edit_pointer_move_canvas(
+    app: *mut UnknownTargetApplication,
+    x: f32,
+    y: f32,
+) -> bool {
+    let Some(app) = app.as_mut() else {
+        return false;
+    };
+    app.text_edit_pointer_move_canvas(x, y)
 }
 
 #[no_mangle]

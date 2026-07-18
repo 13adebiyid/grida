@@ -845,6 +845,18 @@ impl Renderer {
         self.update_layer_text_inner(node_id, text, None);
     }
 
+    /// Drop the paragraph shaped for one text node before a host-driven node
+    /// replacement. Text-edit sessions patch the layer cache in place; if the
+    /// subsequent canonical `replace_node` reuses that entry, the rebuilt
+    /// layer can retain transient/stale attributed content until a full scene
+    /// reload. Node replacement calls this before rebuilding from the graph.
+    pub(crate) fn invalidate_node_paragraph(&mut self, node_id: NodeId) {
+        self.scene_cache
+            .paragraph
+            .borrow_mut()
+            .invalidate_by_id(node_id);
+    }
+
     /// Update the text content for an attributed text node, replacing
     /// both the plain text and the full `AttributedString` (text + runs).
     ///

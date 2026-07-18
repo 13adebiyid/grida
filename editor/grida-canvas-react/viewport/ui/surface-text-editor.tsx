@@ -62,6 +62,51 @@ interface ClickState {
   y: number;
 }
 
+interface TextEditCanvasPointerScene {
+  textEditPointerDownCanvas(
+    x: number,
+    y: number,
+    shift: boolean,
+    clickCount: number
+  ): boolean;
+  textEditPointerMoveCanvas(x: number, y: number): boolean;
+}
+
+interface TextEditCanvasPointerCamera {
+  clientPointToCanvasPoint(point: cmath.Vector2): cmath.Vector2;
+}
+
+/** Keep pointer conversion in the same renderer that paints imported text.
+ * Imported scenes can carry parent transforms and vertical alignment that an
+ * axis-aligned React selection box cannot reconstruct exactly. */
+export function forwardTextEditPointerDown(
+  scene: TextEditCanvasPointerScene,
+  camera: TextEditCanvasPointerCamera,
+  clientX: number,
+  clientY: number,
+  shift: boolean,
+  clickCount: number
+): boolean {
+  const [canvasX, canvasY] = camera.clientPointToCanvasPoint([
+    clientX,
+    clientY,
+  ]);
+  return scene.textEditPointerDownCanvas(canvasX, canvasY, shift, clickCount);
+}
+
+export function forwardTextEditPointerMove(
+  scene: TextEditCanvasPointerScene,
+  camera: TextEditCanvasPointerCamera,
+  clientX: number,
+  clientY: number
+): boolean {
+  const [canvasX, canvasY] = camera.clientPointToCanvasPoint([
+    clientX,
+    clientY,
+  ]);
+  return scene.textEditPointerMoveCanvas(canvasX, canvasY);
+}
+
 function WasmTextEditorRelay({ node_id }: { node_id: string }) {
   const editor = useCurrentEditor();
   const node = useNode(node_id);
@@ -251,15 +296,21 @@ function WasmTextEditorRelay({ node_id }: { node_id: string }) {
       e.stopPropagation();
 
       const clickCount = getClickCount(e.clientX, e.clientY);
-      const [lx, ly] = toLayoutLocalPoint(e.clientX, e.clientY);
-      scene.textEditPointerDown(lx, ly, e.shiftKey, clickCount);
+      forwardTextEditPointerDown(
+        scene,
+        editor.camera,
+        e.clientX,
+        e.clientY,
+        e.shiftKey,
+        clickCount
+      );
       scene.redraw();
 
       isDraggingRef.current = true;
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       textareaRef.current?.focus();
     },
-    [scene, getClickCount, toLayoutLocalPoint]
+    [scene, editor.camera, getClickCount]
   );
 
   const handlePointerMove = useCallback(
@@ -267,11 +318,10 @@ function WasmTextEditorRelay({ node_id }: { node_id: string }) {
       if (!scene || !activeRef.current || !isDraggingRef.current) return;
       e.preventDefault();
       e.stopPropagation();
-      const [lx, ly] = toLayoutLocalPoint(e.clientX, e.clientY);
-      scene.textEditPointerMove(lx, ly);
+      forwardTextEditPointerMove(scene, editor.camera, e.clientX, e.clientY);
       scene.redraw();
     },
-    [scene, toLayoutLocalPoint]
+    [scene, editor.camera]
   );
 
   const handlePointerUp = useCallback(

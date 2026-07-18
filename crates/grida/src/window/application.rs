@@ -878,6 +878,11 @@ impl ApplicationApi for UnknownTargetApplication {
         // per-frame render cost; the diff result gates whether we go
         // down a fast path or the full-rebuild path.
         let old_node_for_diff = scene.graph.get_node(&internal_id).ok().cloned();
+        let replaces_text =
+            matches!(
+                old_node_for_diff.as_ref(),
+                Some(Node::TextSpan(_) | Node::AttributedText(_))
+            ) || matches!(&decoded.node, Node::TextSpan(_) | Node::AttributedText(_));
 
         if scene.graph.replace_node(internal_id, decoded.node).is_err() {
             return false;
@@ -895,6 +900,9 @@ impl ApplicationApi for UnknownTargetApplication {
             .map(|(old, new)| diff_node(old, new))
             .unwrap_or(ChangeKind::Full);
 
+        if replaces_text {
+            self.renderer.invalidate_node_paragraph(internal_id);
+        }
         self.renderer.mark_node_change_kind(internal_id, kind);
         self.queue();
         true
@@ -2140,12 +2148,48 @@ impl UnknownTargetApplication {
         self.text_edit_refresh_decorations();
     }
 
+    /// Pointer down in canvas coordinates. The renderer owns the complete
+    /// world transform (including imported parent/group transforms and text
+    /// vertical alignment), so host overlays must use this path instead of
+    /// reconstructing layout-local coordinates from an axis-aligned box.
+    pub fn text_edit_pointer_down_canvas(
+        &mut self,
+        x: f32,
+        y: f32,
+        shift: bool,
+        click_count: u32,
+    ) -> bool {
+        let Some(node_id) = self.text_edit.as_ref().map(|te| te.node_id()) else {
+            return false;
+        };
+        let Some(local) = self.canvas_to_text_local([x, y], node_id) else {
+            return false;
+        };
+        self.text_edit_pointer_down(local[0], local[1], shift, click_count);
+        true
+    }
+
     /// Pointer move during drag (layout-local coordinates).
     pub fn text_edit_pointer_move(&mut self, x: f32, y: f32) {
         if let Some(te) = self.text_edit.as_mut() {
             te.session.on_pointer_move(x, y);
         }
         self.text_edit_refresh_decorations();
+    }
+
+    /// Pointer move in canvas coordinates during selection drag.
+    pub fn text_edit_pointer_move_canvas(&mut self, x: f32, y: f32) -> bool {
+        let Some(node_id) = self.text_edit.as_ref().map(|te| te.node_id()) else {
+            return false;
+        };
+        let Some(local) = self.canvas_to_text_local([x, y], node_id) else {
+            return false;
+        };
+        if let Some(te) = self.text_edit.as_mut() {
+            te.session.on_pointer_move(local[0], local[1]);
+        }
+        self.text_edit_refresh_decorations_overlay_only();
+        true
     }
 
     /// Pointer up.

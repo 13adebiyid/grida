@@ -864,17 +864,22 @@ const safe_properties: Record<string, SafePropertyHandler<never>> = {
     apply: (draft, value, prev) => {
       (draft as UN).text = value ?? null;
       // Attributed nodes ("text"): styled-run offsets describe the PREVIOUS
-      // characters. A plain-text commit (surface text editor exit) must not
-      // leave stale offsets in the document — the node renders and saves
-      // through its default style instead (dominant-style policy, same as
-      // the importer's fallback and the live override render path).
-      if (
-        (draft as UN).type === "text" &&
-        value !== prev &&
-        Array.isArray((draft as UN).styled_runs) &&
-        ((draft as UN).styled_runs as unknown[]).length > 0
-      ) {
-        (draft as UN).styled_runs = [];
+      // characters. Collapse a plain-text commit to one complete run using
+      // the node's importer-selected default (dominant) style. An empty run
+      // list violates the native AttributedString invariant and paints no
+      // glyphs until the document is reloaded — the disappearing-text bug.
+      if ((draft as UN).type === "text" && value !== prev) {
+        const nextText = typeof value === "string" ? value : "";
+        const defaultStyle = (
+          draft as unknown as grida.program.nodes.AttributedTextNode
+        ).default_style;
+        (draft as UN).styled_runs = [
+          {
+            start: 0,
+            end: nextText.length,
+            style: defaultStyle,
+          },
+        ];
       }
     },
   }),

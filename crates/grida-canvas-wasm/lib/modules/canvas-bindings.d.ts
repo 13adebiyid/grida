@@ -317,11 +317,23 @@ declare namespace canvas {
       shift: boolean,
       click_count: number
     ): void;
+    _text_edit_pointer_down_canvas(
+      state: GridaCanvasApplicationPtr,
+      x: number,
+      y: number,
+      shift: boolean,
+      click_count: number
+    ): boolean;
     _text_edit_pointer_move(
       state: GridaCanvasApplicationPtr,
       x: number,
       y: number
     ): void;
+    _text_edit_pointer_move_canvas(
+      state: GridaCanvasApplicationPtr,
+      x: number,
+      y: number
+    ): boolean;
     _text_edit_pointer_up(state: GridaCanvasApplicationPtr): void;
     _text_edit_ime_set_preedit(
       state: GridaCanvasApplicationPtr,
