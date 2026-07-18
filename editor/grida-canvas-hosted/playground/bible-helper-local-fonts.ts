@@ -32,6 +32,22 @@ export interface BibleHelperSystemFontFamily {
   faces: BibleHelperSystemFontFace[];
 }
 
+export function findPreferredMissingFamilyFallback(
+  items: ReadonlyArray<GoogleWebFontListItem>,
+  preferredFallbacks: ReadonlyArray<string> = ["Times New Roman", "Times"]
+): GoogleWebFontListItem | null {
+  return (
+    preferredFallbacks
+      .map((family) =>
+        items.find(
+          (item) =>
+            item.family.toLocaleLowerCase() === family.toLocaleLowerCase()
+        )
+      )
+      .find((item): item is GoogleWebFontListItem => item !== undefined) ?? null
+  );
+}
+
 /** Convert the BH font catalog (families → faces with rhema-font:// urls) into
  *  GoogleWebFontListItem entries. Tolerant of malformed input. */
 export function buildLocalWebfontItems(
@@ -91,13 +107,10 @@ export function withMissingFamilyFallbacks(
 ): GoogleWebFontListItem[] {
   const out = [...items];
   const present = new Set(items.map((item) => item.family.toLocaleLowerCase()));
-  const fallback = preferredFallbacks
-    .map((family) =>
-      items.find(
-        (item) => item.family.toLocaleLowerCase() === family.toLocaleLowerCase()
-      )
-    )
-    .find((item): item is GoogleWebFontListItem => item !== undefined);
+  const fallback = findPreferredMissingFamilyFallback(
+    items,
+    preferredFallbacks
+  );
   if (!fallback) return out;
   for (const rawFamily of requiredFamilies) {
     const family = rawFamily.trim();

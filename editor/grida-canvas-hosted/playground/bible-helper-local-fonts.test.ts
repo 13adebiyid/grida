@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import type { GoogleWebFontListItem } from "@grida/fonts/google";
-import { withMissingFamilyFallbacks } from "./bible-helper-local-fonts";
+import {
+  findPreferredMissingFamilyFallback,
+  withMissingFamilyFallbacks,
+} from "./bible-helper-local-fonts";
 
 function item(family: string, url: string): GoogleWebFontListItem {
   return {
@@ -16,6 +19,19 @@ function item(family: string, url: string): GoogleWebFontListItem {
 }
 
 describe("Bible Helper local font fallbacks", () => {
+  test("selects the same installed serif fallback used by browser output", () => {
+    const times = item("Times New Roman", "rhema-font://times");
+    expect(
+      findPreferredMissingFamilyFallback([item("Inter", "inter"), times])
+    ).toBe(times);
+  });
+
+  test("returns null when the platform fallback is unavailable", () => {
+    expect(
+      findPreferredMissingFamilyFallback([item("Inter", "inter")])
+    ).toBeNull();
+  });
+
   test("aliases the CSS serif fallback bytes under missing imported families", () => {
     const times = item("Times New Roman", "rhema-font://times");
     const result = withMissingFamilyFallbacks(

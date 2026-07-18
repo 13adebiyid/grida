@@ -48,6 +48,7 @@ import {
   BIBLE_HELPER_LIST_SYSTEM_FONTS_REQUEST,
   BIBLE_HELPER_LIST_SYSTEM_FONTS_RESULT,
   buildLocalWebfontItems,
+  findPreferredMissingFamilyFallback,
   withMissingFamilyFallbacks,
 } from "./bible-helper-local-fonts";
 import { suppressImportedContentMarkings } from "./rhema-import-normalizers";
@@ -1108,8 +1109,25 @@ export default function CanvasPlayground({
     }
     let cancelled = false;
     setFontCatalogSettled(false);
-    void instance
-      .loadDocumentFontsSync()
+    const outputFallback = findPreferredMissingFamilyFallback(
+      systemFontItemsRef.current
+    );
+    void (async () => {
+      // Chromium's output uses its platform serif face when a ProPresenter
+      // family is unavailable. The WASM backend otherwise falls back to Inter,
+      // and registering the same bytes under an alias is not sufficient because
+      // the font's internal family name wins. Load and configure the real local
+      // fallback once so canvas and output make the same choice. Exact installed
+      // document families still take precedence over this fallback list.
+      if (outputFallback) {
+        await instance.loadFontSync({ family: outputFallback.family });
+        instance.fontCollection?.setFallbackFonts([
+          outputFallback.family,
+          ...Array.from(editorNamespace.config.fonts.DEFAULT_FONT_FALLBACK_SET),
+        ]);
+      }
+      await instance.loadDocumentFontsSync();
+    })()
       .then(() => {
         if (!cancelled) setFontCatalogSettled(true);
       })
