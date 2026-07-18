@@ -587,13 +587,24 @@ export namespace dq {
     }
 
     fonts(): Array<string> {
-      return Array.from(
-        new Set(
-          this.textnodes()
-            .map((node) => node.font_family)
-            .filter(Boolean) as Array<string>
-        )
-      );
+      const families = new Set<string>();
+      const add = (family: unknown) => {
+        if (typeof family === "string" && family.trim()) {
+          families.add(family.trim());
+        }
+      };
+
+      for (const node of Object.values(this.nodes)) {
+        if (node.type === "tspan") {
+          add(node.font_family);
+          continue;
+        }
+        if (node.type !== "text") continue;
+        add(node.default_style.font_family);
+        for (const run of node.styled_runs) add(run.style.font_family);
+      }
+
+      return [...families];
     }
 
     /**

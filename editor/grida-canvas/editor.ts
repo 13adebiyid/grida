@@ -4073,6 +4073,12 @@ export class Editor
     for (const [ref, bytes] of Object.entries(images)) {
       const rid = `res://images/${ref}`;
       this._image_bytes.set(rid, bytes);
+      // Host-managed assets arrive asynchronously after the first scene
+      // paint. The renderer's initial missing-resource request may already
+      // have been drained, so also register late bytes directly with a mounted
+      // surface. resolveImage queues the redraw itself. Before mount, the byte
+      // cache remains the source for the normal missing-image poll.
+      this._m_wasm_canvas_scene?.resolveImage(rid, bytes);
     }
   }
 
