@@ -1098,7 +1098,11 @@ export default function CanvasPlayground({
       setFontCatalogSettled(true);
       return;
     }
-    if (!documentReady || !systemFontCatalogReceived) {
+    // loadDocumentFontsSync is intentionally a no-op until the canvas backend
+    // binds its font collection. Do not mark the catalog settled during that
+    // pre-mount window or imported families will stay on the WASM fallback
+    // until some unrelated registry change happens later.
+    if (!documentReady || !canvasReady || !systemFontCatalogReceived) {
       setFontCatalogSettled(false);
       return;
     }
@@ -1121,6 +1125,7 @@ export default function CanvasPlayground({
       cancelled = true;
     };
   }, [
+    canvasReady,
     documentReady,
     fonts,
     instance,
