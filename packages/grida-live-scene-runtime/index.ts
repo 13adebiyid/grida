@@ -1,9 +1,9 @@
 import init from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.0.0";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.1.0";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
-  "live-scene-runtime-v1|archive-grid|scene-identity|image-font-hydration|atomic-text-visibility-patch|persistent-surface|dom-gated-video-animation";
+  "live-scene-runtime-v1|archive-grid|scene-identity|image-font-hydration|atomic-text-visibility-patch|persistent-surface|document-driven-video|dom-gated-animation";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -50,12 +50,7 @@ export interface LiveSceneSurface {
 
 export interface LiveSceneCapabilities {
   eligible: boolean;
-  reason:
-    | "eligible"
-    | "invalid-document"
-    | "missing-scene"
-    | "in-scene-video"
-    | "animation";
+  reason: "eligible" | "invalid-document" | "missing-scene" | "animation";
   hasInSceneVideo: boolean;
   hasAnimation: boolean;
   nodeCount: number;
@@ -238,12 +233,8 @@ export function scanLiveSceneCapabilities(
     (animation) => isRecord(animation) && animation.scene_id === sceneId
   );
   return {
-    eligible: !hasInSceneVideo && !hasAnimation,
-    reason: hasInSceneVideo
-      ? "in-scene-video"
-      : hasAnimation
-        ? "animation"
-        : "eligible",
+    eligible: !hasAnimation,
+    reason: hasAnimation ? "animation" : "eligible",
     hasInSceneVideo,
     hasAnimation,
     nodeCount: ids.size,

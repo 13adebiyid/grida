@@ -137,7 +137,7 @@ describe("live scene runtime", () => {
     expect(runtime.diagnostics().patchFailures).toBe(1);
   });
 
-  it("marks true in-scene video and timed animation as DOM-only capabilities", () => {
+  it("allows document-driven video composition while keeping timed visual animation gated", () => {
     const withVideo = {
       ...snapshot,
       document: {
@@ -149,9 +149,9 @@ describe("live scene runtime", () => {
       },
     };
     expect(scanLiveSceneCapabilities(withVideo, "scene")).toMatchObject({
-      eligible: false,
+      eligible: true,
       hasInSceneVideo: true,
-      reason: "in-scene-video",
+      reason: "eligible",
     });
 
     const withAnimation = {
