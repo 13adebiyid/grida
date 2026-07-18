@@ -600,8 +600,11 @@ export namespace dq {
           continue;
         }
         if (node.type !== "text") continue;
-        add(node.default_style.font_family);
-        for (const run of node.styled_runs) add(run.style.font_family);
+        // Imported/legacy attributed nodes may omit the newer default-style
+        // object. Font discovery is a readiness aid and must stay tolerant of
+        // those valid older documents.
+        add(node.default_style?.font_family);
+        for (const run of node.styled_runs) add(run.style?.font_family);
       }
 
       return [...families];

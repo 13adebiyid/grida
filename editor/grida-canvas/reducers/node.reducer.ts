@@ -222,6 +222,23 @@ const safe_properties: Record<string, SafePropertyHandler<never>> = {
         ? (value as unknown as PaintValue[])
         : [];
 
+      // Attributed text runs can carry their own paints, which override the
+      // node-level fill. A whole-node fill edit from the Properties panel must
+      // therefore update both representations atomically; otherwise the UI
+      // reports the new colour while the canvas and saved document keep the
+      // imported run colour.
+      if (
+        (target as UN).type === "text" &&
+        Array.isArray((target as UN).styled_runs)
+      ) {
+        const normalized = paints.map((paint) => normalizePaintValue(paint));
+        for (const run of (target as UN).styled_runs as Array<{
+          fill_paints?: PaintValue[];
+        }>) {
+          run.fill_paints = normalized.map((paint) => ({ ...paint }));
+        }
+      }
+
       if (!paints.length) {
         writePaints(target, "fill", []);
         return;

@@ -15,6 +15,8 @@ import { Editor } from "@/grida-canvas/editor";
 import { createHeadlessEditor } from "@/grida-canvas/__tests__/utils";
 import { sceneNode, textNode } from "@/grida-canvas/__tests__/utils/factories";
 import type grida from "@grida/schema";
+import type cg from "@grida/cg";
+import kolor from "@grida/color";
 
 function attributedTextNode(
   id: string,
@@ -93,6 +95,23 @@ describe("attributed text (type: 'text') editing", () => {
       styled_runs: unknown[];
     };
     expect(node.styled_runs).toHaveLength(1);
+  });
+
+  test("a whole-node fill edit updates attributed run paints", () => {
+    const red = {
+      type: "solid",
+      color: kolor.colorformats.newRGBA32F(1, 0, 0, 1),
+      active: true,
+    } satisfies cg.SolidPaint;
+
+    ed.doc.changeNodePropertyFills("attributed-1", [red]);
+
+    const node = ed.state.document.nodes["attributed-1"] as unknown as {
+      fill_paints: cg.Paint[];
+      styled_runs: Array<{ fill_paints: cg.Paint[] }>;
+    };
+    expect(node.fill_paints[0]).toMatchObject(red);
+    expect(node.styled_runs[0].fill_paints[0]).toMatchObject(red);
   });
 
   test("tspan text commits are unaffected", () => {
