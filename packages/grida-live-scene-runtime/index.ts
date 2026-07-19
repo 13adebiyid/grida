@@ -1,9 +1,9 @@
 import init from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.1.0";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.2.0";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
-  "live-scene-runtime-v1|archive-grid|scene-identity|image-font-hydration|atomic-text-visibility-patch|persistent-surface|document-driven-video|dom-gated-animation";
+  "live-scene-runtime-v1|archive-grid|scene-identity|image-multiface-font-hydration|atomic-text-visibility-patch|persistent-surface|document-driven-video|dom-gated-animation";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -91,7 +91,9 @@ export interface CreateLiveSceneRuntimeOptions {
   createSurface?: () => Promise<LiveSceneSurface>;
   encodeNode?: (node: LiveSceneNode) => Uint8Array;
   resolveImage?: (resourceId: string) => Promise<Uint8Array | null>;
-  resolveFont?: (family: string) => Promise<Uint8Array | null>;
+  resolveFont?: (
+    family: string
+  ) => Promise<Uint8Array | readonly Uint8Array[] | null>;
   afterPaint?: () => Promise<void>;
 }
 
@@ -532,11 +534,23 @@ export async function createLiveSceneRuntime(
 
     const unresolvedFonts: string[] = [];
     for (const { family } of surface.listMissingFonts()) {
-      const bytes = options.resolveFont
+      const resolved = options.resolveFont
         ? await options.resolveFont(family)
         : null;
-      if (bytes) surface.addFont(family, bytes);
-      else unresolvedFonts.push(family);
+      const faces =
+        resolved instanceof Uint8Array
+          ? [resolved]
+          : Array.isArray(resolved)
+            ? resolved.filter(
+                (bytes): bytes is Uint8Array =>
+                  bytes instanceof Uint8Array && bytes.byteLength > 0
+              )
+            : [];
+      if (faces.length > 0) {
+        for (const bytes of faces) surface.addFont(family, bytes);
+      } else {
+        unresolvedFonts.push(family);
+      }
     }
     if (unresolvedFonts.length > 0) {
       stats.unresolvedFonts = [...new Set(unresolvedFonts)].sort();

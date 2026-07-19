@@ -169,4 +169,31 @@ describe("live scene runtime", () => {
       reason: "animation",
     });
   });
+
+  it("registers every resolved face for a missing font family", async () => {
+    const fake = surface();
+    fake.listMissingFonts.mockReturnValue([{ family: "Inter" }]);
+    await createLiveSceneRuntime({
+      canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
+      archive: { document: new Uint8Array([1]), images: {} },
+      snapshot,
+      sceneId: "scene",
+      expectedSchemaVersion: "test-schema",
+      createSurface: async () => fake,
+      resolveFont: async () => [new Uint8Array([1, 2]), new Uint8Array([3, 4])],
+      afterPaint: async () => {},
+    });
+
+    expect(fake.addFont).toHaveBeenCalledTimes(2);
+    expect(fake.addFont).toHaveBeenNthCalledWith(
+      1,
+      "Inter",
+      new Uint8Array([1, 2])
+    );
+    expect(fake.addFont).toHaveBeenNthCalledWith(
+      2,
+      "Inter",
+      new Uint8Array([3, 4])
+    );
+  });
 });
