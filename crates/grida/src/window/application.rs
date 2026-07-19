@@ -2883,15 +2883,17 @@ impl UnknownTargetApplication {
             Ok(n) => n,
             Err(_) => return 0.0,
         };
-        match node {
-            Node::TextSpan(t) => match t.height {
-                Some(h) => match t.text_align_vertical {
-                    TextAlignVertical::Top => 0.0,
-                    TextAlignVertical::Center => (h - paragraph_height) / 2.0,
-                    TextAlignVertical::Bottom => h - paragraph_height,
-                },
-                None => 0.0,
+        let offset = |height: Option<f32>, alignment: TextAlignVertical| match height {
+            Some(h) => match alignment {
+                TextAlignVertical::Top => 0.0,
+                TextAlignVertical::Center => (h - paragraph_height) / 2.0,
+                TextAlignVertical::Bottom => h - paragraph_height,
             },
+            None => 0.0,
+        };
+        match node {
+            Node::TextSpan(t) => offset(t.height, t.text_align_vertical),
+            Node::AttributedText(t) => offset(t.height, t.text_align_vertical),
             _ => 0.0,
         }
     }

@@ -46,6 +46,27 @@ function document(): grida.program.document.Document {
   };
 }
 
+function verticallyCenteredDocument(): grida.program.document.Document {
+  const doc = document();
+  const body = doc.nodes.body as unknown as Record<string, unknown>;
+  const text = "TOP LINE\nBOTTOM LINE";
+  body.text = text;
+  body.layout_inset_left = 100;
+  body.layout_inset_top = 50;
+  body.layout_target_width = 600;
+  body.layout_target_height = 300;
+  body.text_align_vertical = "center";
+  body.styled_runs = [
+    {
+      start: 0,
+      end: text.length,
+      style: body.default_style,
+      fill_paints: body.fill_paints,
+    },
+  ];
+  return doc;
+}
+
 function pngVisibleAlphaPixels(data: Uint8Array): number {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const idat: Uint8Array[] = [];
@@ -146,6 +167,30 @@ describe("attributed text surface commit visibility", () => {
       expect(
         (handle.ed.state.document.nodes.body as { text?: string }).text
       ).toBe("Changed prayer words");
+    } finally {
+      handle.dispose();
+    }
+  }, 30_000);
+
+  test("canvas-space pointer hit testing accounts for vertical text alignment", async () => {
+    const handle = await createEditorWithWasmSync(
+      verticallyCenteredDocument(),
+      {
+        width: 900,
+        height: 450,
+      }
+    );
+    try {
+      expect(handle.scene.textEditEnter("body")).toBe(true);
+      // The two 48px lines are vertically centered in a 300px-high node at
+      // y=50. This point is at the far-left of the visually painted TOP line.
+      // Treating it as unadjusted layout-local space lands on the bottom line.
+      expect(handle.scene.textEditPointerDownCanvas(101, 171, false, 1)).toBe(
+        true
+      );
+      handle.scene.textEditPointerUp();
+      handle.scene.textEditCommand({ type: "Insert", text: "X" });
+      expect(handle.scene.textEditExit(true)).toBe("XTOP LINE\nBOTTOM LINE");
     } finally {
       handle.dispose();
     }
