@@ -1,9 +1,9 @@
 import init from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.2.0";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.3.0";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
-  "live-scene-runtime-v1|archive-grid|scene-identity|image-multiface-font-hydration|atomic-text-visibility-patch|persistent-surface|document-driven-video|dom-gated-animation";
+  "live-scene-runtime-v1|archive-grid|scene-identity|image-multiface-font-hydration|selected-scene-atomic-patch|engine-owned-text-layout|persistent-surface|document-driven-video|dom-gated-animation";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -314,6 +314,7 @@ class LiveSceneRuntime {
   private readonly encodeNode: (node: LiveSceneNode) => Uint8Array;
   private readonly afterPaint: () => Promise<void>;
   private readonly nodes: Record<string, LiveSceneNode>;
+  private readonly activeNodeIds: ReadonlySet<string>;
   private disposed = false;
   private patchQueue: Promise<void> = Promise.resolve();
   private readonly stats: LiveSceneDiagnostics;
@@ -323,6 +324,7 @@ class LiveSceneRuntime {
     canvas: HTMLCanvasElement,
     dpr: number,
     snapshot: LiveSceneSnapshot,
+    sceneId: string,
     encodeNode: (node: LiveSceneNode) => Uint8Array,
     afterPaint: () => Promise<void>,
     stats: LiveSceneDiagnostics
@@ -338,6 +340,7 @@ class LiveSceneRuntime {
         { ...node },
       ])
     );
+    this.activeNodeIds = descendants(snapshot, sceneId);
     this.stats = stats;
   }
 
@@ -384,6 +387,13 @@ class LiveSceneRuntime {
           throw new LiveSceneRuntimeError(
             "patch-node-missing",
             `The live patch target ${id} is not in the active document.`
+          );
+        }
+        if (!this.activeNodeIds.has(id)) {
+          this.stats.patchFailures += 1;
+          throw new LiveSceneRuntimeError(
+            "patch-node-outside-scene",
+            `The live patch target ${id} is outside the active scene.`
           );
         }
         const next: LiveSceneNode = { ...current };
@@ -568,6 +578,7 @@ export async function createLiveSceneRuntime(
       options.canvas,
       dpr,
       snapshot,
+      options.sceneId,
       options.encodeNode ?? ((node) => io.GRID.encodeNode(node as never)),
       afterPaint,
       stats

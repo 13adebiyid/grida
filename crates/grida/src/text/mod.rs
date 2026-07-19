@@ -3,7 +3,7 @@ pub mod paragraph_cache_layout;
 pub mod text_style;
 pub mod text_transform;
 
-use crate::cg::types::TextAlign;
+use crate::cg::types::{TextAlign, TextAlignVertical};
 use crate::vectornetwork::VectorNetwork;
 use skia_safe::textlayout;
 use skia_safe::{textlayout::Paragraph, Matrix, Path, PathBuilder, Point};
@@ -27,6 +27,28 @@ pub fn make_paragraph_style(
         ps.set_ellipsis(ellipsis.unwrap_or("..."));
     }
     ps
+}
+
+/// Return the vertical paint offset for a paragraph inside its authored text
+/// frame. A missing height is an auto-sized frame, so there is no alignment
+/// space and the paragraph starts at zero. Fixed frames intentionally permit a
+/// negative offset when the paragraph is taller than the frame; clipping then
+/// follows the authored top/center/bottom alignment instead of silently
+/// changing the font size.
+#[inline]
+pub fn vertical_align_offset(
+    container_height: Option<f32>,
+    layout_height: f32,
+    alignment: TextAlignVertical,
+) -> f32 {
+    let Some(height) = container_height else {
+        return 0.0;
+    };
+    match alignment {
+        TextAlignVertical::Top => 0.0,
+        TextAlignVertical::Center => (height - layout_height) / 2.0,
+        TextAlignVertical::Bottom => height - layout_height,
+    }
 }
 
 /// Convert a Skia [`Paragraph`] into a [`Path`].
@@ -59,4 +81,46 @@ pub fn paragraph_to_path(paragraph: &mut Paragraph) -> Path {
 pub fn paragraph_to_vector_network(paragraph: &mut Paragraph) -> VectorNetwork {
     let path = paragraph_to_path(paragraph);
     VectorNetwork::from(&path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::vertical_align_offset;
+    use crate::cg::types::TextAlignVertical;
+
+    #[test]
+    fn vertical_alignment_uses_the_authored_fixed_frame() {
+        assert_eq!(
+            vertical_align_offset(Some(300.0), 100.0, TextAlignVertical::Top),
+            0.0
+        );
+        assert_eq!(
+            vertical_align_offset(Some(300.0), 100.0, TextAlignVertical::Center),
+            100.0
+        );
+        assert_eq!(
+            vertical_align_offset(Some(300.0), 100.0, TextAlignVertical::Bottom),
+            200.0
+        );
+    }
+
+    #[test]
+    fn auto_height_has_no_artificial_alignment_space() {
+        assert_eq!(
+            vertical_align_offset(None, 100.0, TextAlignVertical::Center),
+            0.0
+        );
+    }
+
+    #[test]
+    fn overflowing_fixed_text_keeps_its_authored_alignment() {
+        assert_eq!(
+            vertical_align_offset(Some(100.0), 180.0, TextAlignVertical::Center),
+            -40.0
+        );
+        assert_eq!(
+            vertical_align_offset(Some(100.0), 180.0, TextAlignVertical::Bottom),
+            -80.0
+        );
+    }
 }

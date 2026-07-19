@@ -490,8 +490,14 @@ impl From<&crate::node::schema::TextSpanNodeRec> for Style {
             style.size.width = Dimension::auto();
         }
 
-        // Height is auto for text (will be determined by content)
-        style.size.height = Dimension::auto();
+        // Fixed height is the authored alignment/clipping frame. Auto height
+        // remains content-sized. Keep this identical to attributed text so
+        // geometry, hit testing, and painting all agree on the same box.
+        style.size.height = if let Some(height) = node.height {
+            Dimension::length(height)
+        } else {
+            Dimension::auto()
+        };
 
         apply_layout_child(style, &node.layout_child, node.transform)
     }
@@ -613,5 +619,33 @@ impl From<&crate::node::schema::HTMLEmbedNodeRec> for Style {
             ..grida_style_default()
         };
         apply_layout_child(style, &node.layout_child, node.transform)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::factory::NodeFactory;
+
+    #[test]
+    fn text_span_fixed_height_is_a_real_layout_dimension() {
+        let factory = NodeFactory::new();
+        let mut node = factory.create_text_span_node();
+        node.height = Some(180.0);
+
+        let style = Style::from(&node);
+
+        assert_eq!(style.size.height, Dimension::length(180.0));
+    }
+
+    #[test]
+    fn text_span_auto_height_remains_content_sized() {
+        let factory = NodeFactory::new();
+        let mut node = factory.create_text_span_node();
+        node.height = None;
+
+        let style = Style::from(&node);
+
+        assert_eq!(style.size.height, Dimension::auto());
     }
 }

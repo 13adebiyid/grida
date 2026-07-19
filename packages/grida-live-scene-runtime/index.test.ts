@@ -19,12 +19,24 @@ const snapshot = {
         active: true,
         layout_target_width: 1200,
         layout_target_height: 500,
+        text_align: "center",
+        text_align_vertical: "center",
+      },
+      auto: {
+        id: "auto",
+        type: "tspan",
+        text: "Auto authored",
+        active: true,
+        layout_target_width: "auto",
+        layout_target_height: "auto",
+        text_align: "center",
+        text_align_vertical: "center",
       },
       video: { id: "video", type: "video" },
     },
     links: {
       scene: ["stage"],
-      stage: ["body"],
+      stage: ["body", "auto"],
     },
     scenes_ref: ["scene"],
     animations: {},
@@ -96,6 +108,81 @@ describe("live scene runtime", () => {
       patchesApplied: 100,
       patchFailures: 0,
     });
+  });
+
+  it("preserves Grida alignment and auto-size properties across live text patches", async () => {
+    const fake = surface();
+    const encoded: Array<Record<string, unknown>> = [];
+    const runtime = await createLiveSceneRuntime({
+      canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
+      archive: { document: new Uint8Array([1]), images: {} },
+      snapshot,
+      sceneId: "scene",
+      expectedSchemaVersion: "test-schema",
+      createSurface: async () => fake,
+      encodeNode: (node) => {
+        encoded.push({ ...node });
+        return new TextEncoder().encode(JSON.stringify(node));
+      },
+      afterPaint: async () => {},
+    });
+
+    await runtime.applyPatch({
+      text: { body: "Centered scripture", auto: "Auto-sized scripture" },
+    });
+
+    const patchedBody = encoded.find(
+      (node) => node.id === "body" && node.text === "Centered scripture"
+    );
+    const patchedAuto = encoded.find(
+      (node) => node.id === "auto" && node.text === "Auto-sized scripture"
+    );
+    expect(patchedBody).toMatchObject({
+      layout_target_width: 1200,
+      layout_target_height: 500,
+      text_align: "center",
+      text_align_vertical: "center",
+    });
+    expect(patchedAuto).toMatchObject({
+      layout_target_width: "auto",
+      layout_target_height: "auto",
+      text_align: "center",
+      text_align_vertical: "center",
+    });
+  });
+
+  it("rejects patches outside the selected scene", async () => {
+    const fake = surface();
+    const runtime = await createLiveSceneRuntime({
+      canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
+      archive: { document: new Uint8Array([1]), images: {} },
+      snapshot: {
+        ...snapshot,
+        document: {
+          ...snapshot.document,
+          nodes: {
+            ...snapshot.document.nodes,
+            otherScene: { id: "otherScene", type: "scene" },
+            otherText: { id: "otherText", type: "text", text: "Other" },
+          },
+          links: {
+            ...snapshot.document.links,
+            otherScene: ["otherText"],
+          },
+          scenes_ref: ["scene", "otherScene"],
+        },
+      },
+      sceneId: "scene",
+      expectedSchemaVersion: "test-schema",
+      createSurface: async () => fake,
+      encodeNode: (node) => new TextEncoder().encode(JSON.stringify(node)),
+      afterPaint: async () => {},
+    });
+
+    await expect(
+      runtime.applyPatch({ text: { otherText: "Wrong scene" } })
+    ).rejects.toMatchObject({ code: "patch-node-outside-scene" });
+    expect(fake.replaceNode).not.toHaveBeenCalled();
   });
 
   it("rolls back every changed node when an atomic patch member fails", async () => {

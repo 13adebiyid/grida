@@ -1669,14 +1669,8 @@ impl<'a> Painter<'a> {
 
         let layout_height = layout_size.1;
         let container_height = height.unwrap_or(layout_height);
-        let y_offset = match height {
-            Some(h) => match text_align_vertical {
-                TextAlignVertical::Top => 0.0,
-                TextAlignVertical::Center => (h - layout_height) / 2.0,
-                TextAlignVertical::Bottom => h - layout_height,
-            },
-            None => 0.0,
-        };
+        let y_offset =
+            crate::text::vertical_align_offset(*height, layout_height, *text_align_vertical);
 
         self.draw_text_paragraph(
             &paragraph,
@@ -2112,14 +2106,11 @@ impl<'a> Painter<'a> {
                             let layout_height = para_set.height();
                             let layout_width = para_set.fill.max_width();
                             let container_height = text_layer.height.unwrap_or(layout_height);
-                            let y_offset = match text_layer.height {
-                                Some(h) => match text_layer.text_align_vertical {
-                                    TextAlignVertical::Top => 0.0,
-                                    TextAlignVertical::Center => (h - layout_height) / 2.0,
-                                    TextAlignVertical::Bottom => h - layout_height,
-                                },
-                                None => 0.0,
-                            };
+                            let y_offset = crate::text::vertical_align_offset(
+                                text_layer.height,
+                                layout_height,
+                                text_layer.text_align_vertical,
+                            );
 
                             // Wrap fill paragraph for shadow/blur compatibility.
                             let fill_rc = Rc::new(RefCell::new(para_set.fill));
@@ -2192,14 +2183,11 @@ impl<'a> Painter<'a> {
 
                         let layout_height = layout_size.1;
                         let container_height = text_layer.height.unwrap_or(layout_height);
-                        let y_offset = match text_layer.height {
-                            Some(h) => match text_layer.text_align_vertical {
-                                TextAlignVertical::Top => 0.0,
-                                TextAlignVertical::Center => (h - layout_height) / 2.0,
-                                TextAlignVertical::Bottom => h - layout_height,
-                            },
-                            None => 0.0,
-                        };
+                        let y_offset = crate::text::vertical_align_offset(
+                            text_layer.height,
+                            layout_height,
+                            text_layer.text_align_vertical,
+                        );
 
                         let draw_content = || {
                             let inner_text_draw = || {
@@ -2717,14 +2705,11 @@ impl<'a> Painter<'a> {
                     };
 
                     let layout_height = layout_size.1;
-                    let y_offset = match text_layer.height {
-                        Some(h) => match text_layer.text_align_vertical {
-                            TextAlignVertical::Top => 0.0,
-                            TextAlignVertical::Center => (h - layout_height) / 2.0,
-                            TextAlignVertical::Bottom => h - layout_height,
-                        },
-                        None => 0.0,
-                    };
+                    let y_offset = crate::text::vertical_align_offset(
+                        text_layer.height,
+                        layout_height,
+                        text_layer.text_align_vertical,
+                    );
 
                     let glyph_path = self.build_text_glyph_path(&paragraph, y_offset);
                     if !glyph_path.is_empty() {

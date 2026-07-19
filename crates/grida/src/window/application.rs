@@ -1,5 +1,5 @@
 use crate::cg::color::CGColor;
-use crate::cg::types::{Paint, TextAlignVertical};
+use crate::cg::types::Paint;
 use crate::export::{
     export_node_as, export_pdf_document, ExportAs, ExportPdfDocumentOptions, Exported,
 };
@@ -648,14 +648,11 @@ impl ApplicationApi for UnknownTargetApplication {
                         );
 
                         let layout_height = paragraph.borrow().height();
-                        let y_offset = match n.height {
-                            Some(h) => match n.text_align_vertical {
-                                TextAlignVertical::Top => 0.0,
-                                TextAlignVertical::Center => (h - layout_height) / 2.0,
-                                TextAlignVertical::Bottom => h - layout_height,
-                            },
-                            None => 0.0,
-                        };
+                        let y_offset = crate::text::vertical_align_offset(
+                            n.height,
+                            layout_height,
+                            n.text_align_vertical,
+                        );
 
                         let mut path = {
                             let mut para_ref = paragraph.borrow_mut();
@@ -2883,17 +2880,17 @@ impl UnknownTargetApplication {
             Ok(n) => n,
             Err(_) => return 0.0,
         };
-        let offset = |height: Option<f32>, alignment: TextAlignVertical| match height {
-            Some(h) => match alignment {
-                TextAlignVertical::Top => 0.0,
-                TextAlignVertical::Center => (h - paragraph_height) / 2.0,
-                TextAlignVertical::Bottom => h - paragraph_height,
-            },
-            None => 0.0,
-        };
         match node {
-            Node::TextSpan(t) => offset(t.height, t.text_align_vertical),
-            Node::AttributedText(t) => offset(t.height, t.text_align_vertical),
+            Node::TextSpan(t) => crate::text::vertical_align_offset(
+                t.height,
+                paragraph_height,
+                t.text_align_vertical,
+            ),
+            Node::AttributedText(t) => crate::text::vertical_align_offset(
+                t.height,
+                paragraph_height,
+                t.text_align_vertical,
+            ),
             _ => 0.0,
         }
     }

@@ -1,5 +1,4 @@
 use crate::cache::scene::SceneCache;
-use crate::cg::types::TextAlignVertical;
 use crate::painter::layer::PainterPictureTextLayer;
 use crate::runtime::font_repository::FontRepository;
 use skia_safe::{Path, PathBuilder};
@@ -22,14 +21,11 @@ impl TextOverlay {
             .get_baseline_info_if_cached_by_id(&layer.id, layer.width, fonts.generation())
         {
             // Calculate vertical offset based on alignment and container height
-            let y_offset = match layer.height {
-                Some(h) => match layer.text_align_vertical {
-                    TextAlignVertical::Top => 0.0,
-                    TextAlignVertical::Center => (h - layout_height) / 2.0,
-                    TextAlignVertical::Bottom => h - layout_height,
-                },
-                None => 0.0,
-            };
+            let y_offset = crate::text::vertical_align_offset(
+                layer.height,
+                layout_height,
+                layer.text_align_vertical,
+            );
 
             // Create a path with just the baselines
             let mut builder = PathBuilder::new();
