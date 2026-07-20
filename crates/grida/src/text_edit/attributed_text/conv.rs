@@ -246,7 +246,14 @@ impl From<&StyledRun> for CgStyledTextRun {
 
 impl From<&CgAttributedString> for AttributedText {
     fn from(attr: &CgAttributedString) -> Self {
-        let runs: Vec<StyledRun> = attr.runs.iter().map(Into::into).collect();
+        // Scene documents are allowed to preserve source segmentation, but the
+        // editor model deliberately requires maximal runs. Normalize at this
+        // adapter boundary so every importer and every previously-saved native
+        // document enters text editing through the same invariant-preserving
+        // path. Gaps, overlaps, and invalid byte boundaries remain errors.
+        let mut canonical = attr.clone();
+        canonical.merge_adjacent_runs();
+        let runs: Vec<StyledRun> = canonical.runs.iter().map(Into::into).collect();
         let default_style = runs.first().map(|r| r.style.clone()).unwrap_or_default();
         AttributedText::from_parts(attr.text.clone(), default_style, Default::default(), runs)
     }
@@ -256,5 +263,76 @@ impl From<&AttributedText> for CgAttributedString {
     fn from(attr: &AttributedText) -> Self {
         let runs: Vec<CgStyledTextRun> = attr.runs().iter().map(Into::into).collect();
         CgAttributedString::from_runs(attr.text().to_string(), runs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adjacent_equal_scene_runs_enter_the_editor_as_one_maximal_run() {
+        let style = TextStyleRec::from_font("Berlin Sans FBDemi", 108.0);
+        let attr = CgAttributedString::from_runs(
+            "Luke 5:4",
+            vec![
+                CgStyledTextRun {
+                    start: 0,
+                    end: 4,
+                    style: style.clone(),
+                    fills: None,
+                    strokes: None,
+                    stroke_width: None,
+                    stroke_align: None,
+                },
+                CgStyledTextRun {
+                    start: 4,
+                    end: 8,
+                    style,
+                    fills: None,
+                    strokes: None,
+                    stroke_width: None,
+                    stroke_align: None,
+                },
+            ],
+        );
+
+        let editable = AttributedText::from(&attr);
+
+        assert_eq!(editable.runs().len(), 1);
+        assert_eq!(editable.runs()[0].start, 0);
+        assert_eq!(editable.runs()[0].end, 8);
+    }
+
+    #[test]
+    fn equal_styles_do_not_hide_a_non_contiguous_scene_document() {
+        let style = TextStyleRec::from_font("Inter", 24.0);
+        let attr = CgAttributedString {
+            text: "Hello".into(),
+            runs: vec![
+                CgStyledTextRun {
+                    start: 0,
+                    end: 2,
+                    style: style.clone(),
+                    fills: None,
+                    strokes: None,
+                    stroke_width: None,
+                    stroke_align: None,
+                },
+                CgStyledTextRun {
+                    start: 3,
+                    end: 5,
+                    style,
+                    fills: None,
+                    strokes: None,
+                    stroke_width: None,
+                    stroke_align: None,
+                },
+            ],
+        };
+
+        let result = std::panic::catch_unwind(|| AttributedText::from(&attr));
+
+        assert!(result.is_err());
     }
 }

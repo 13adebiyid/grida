@@ -11,6 +11,7 @@ declare module "@grida/canvas-wasm" {
     resolveImage(resourceId: string, bytes: Uint8Array): void;
     listMissingFonts(): Array<{ family: string }>;
     addFont(family: string, bytes: Uint8Array): void;
+    setFallbackFonts(families: string[]): void;
     replaceNode(bytes: Uint8Array): boolean;
     getNodeAbsoluteBoundingBox(
       target: string
@@ -37,4 +38,30 @@ declare module "@grida/canvas-wasm" {
   export default function init(
     options?: Partial<GridaCanvasModuleInitOptions>
   ): Promise<ApplicationFactory>;
+
+  export interface RasterCanvas {
+    loadSceneGrida(bytes: Uint8Array): void;
+    switchScene(sceneId: string): void;
+    loadedSceneIds(): string[];
+    addImageWithId(bytes: Uint8Array, resourceId: string): unknown;
+    addFont(family: string, bytes: Uint8Array): void;
+    setFallbackFonts(families: string[]): void;
+    exportNodeAs(
+      nodeId: string,
+      options: {
+        format: "PNG";
+        constraints: { type: "scale-to-fit-width"; value: number };
+      }
+    ): { data: Uint8Array };
+    dispose(): void;
+  }
+
+  export function createCanvas(options: {
+    backend: "raster";
+    width: number;
+    height: number;
+    locateFile?: (path: string, version: string) => string;
+    useEmbeddedFonts?: boolean;
+    config?: { skip_layout?: boolean };
+  }): Promise<RasterCanvas>;
 }

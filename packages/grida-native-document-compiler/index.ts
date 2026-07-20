@@ -3,13 +3,13 @@ import { compilerIO } from "@grida/io/compiler";
 import grida from "@grida/schema";
 import { validateAnimationRepository } from "../grida-animation";
 
-export const NATIVE_COMPILER_VERSION = "1.5.0";
+export const NATIVE_COMPILER_VERSION = "1.5.1";
 export const GRIDA_IMPORT_DOCUMENT_VERSION = 1 as const;
 export const GRIDA_IMPORT_RANGE_UNIT = "utf16-code-units" as const;
 export const NATIVE_COMPILER_CONTRACT_DESCRIPTOR =
-  "GridaImportDocumentV1|scene,node(rectangle,ellipse,polygon,star,vector,text,image,video),animation-v1|utf16-code-units|sha256-assets|diagnostics-v1|merge-repack-v2|snapshot-metadata-v1";
+  "GridaImportDocumentV1|scene,node(rectangle,ellipse,polygon,star,vector,text,image,video),animation-v1|utf16-code-units|sha256-assets|diagnostics-v1|merge-repack-v2|snapshot-metadata-v1|maximal-rich-text-runs-v1";
 export const NATIVE_COMPILER_CONTRACT_HASH =
-  "d86376803261d9f69ba112af00211f715be33ed8b6bd1bee728e4faf16c1bd88";
+  "d242b548ba53b6d12104c831b17a15519bc56641c392e4768f5d7fb3690905e8";
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const LIMITS = Object.freeze({
@@ -50,7 +50,6 @@ export interface ImportTextStyleV1 {
   lineHeight?: number;
   fill: ImportPaintV1;
 }
-
 export interface ImportFrameV1 {
   x: number;
   y: number;
@@ -764,17 +763,33 @@ async function compileNode(
           stroke_width: 0,
         } as grida.program.nodes.TextSpanNode;
       }
+      const styledRuns = (node.runs ?? []).map((run) => ({
+        start: run.start,
+        end: run.end,
+        style: textStyle(run.style, node.importKey),
+        fill_paints: [paint(run.style.fill, node.importKey)],
+      }));
+      const maximalRuns = styledRuns.reduce<typeof styledRuns>((out, run) => {
+        const previous = out.at(-1);
+        if (
+          previous &&
+          previous.end === run.start &&
+          stableStringify(previous.style) === stableStringify(run.style) &&
+          stableStringify(previous.fill_paints) ===
+            stableStringify(run.fill_paints)
+        ) {
+          previous.end = run.end;
+        } else {
+          out.push({ ...run });
+        }
+        return out;
+      }, []);
       return {
         type: "text",
         ...base,
         text: node.text,
         default_style: defaultStyle,
-        styled_runs: (node.runs ?? []).map((run) => ({
-          start: run.start,
-          end: run.end,
-          style: textStyle(run.style, node.importKey),
-          fill_paints: [paint(run.style.fill, node.importKey)],
-        })),
+        styled_runs: maximalRuns,
         fill_paints: [defaultFill],
         text_align: node.textAlign ?? "left",
         text_align_vertical: node.verticalAlign ?? "top",

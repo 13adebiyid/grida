@@ -1,9 +1,9 @@
-import init from "@grida/canvas-wasm";
+import init, { createCanvas } from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.3.0";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.4.0";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
-  "live-scene-runtime-v1|archive-grid|scene-identity|image-multiface-font-hydration|selected-scene-atomic-patch|engine-owned-text-layout|persistent-surface|document-driven-video|dom-gated-animation";
+  "live-scene-runtime-v1|archive-grid|scene-identity|document-font-introspection|shared-font-fallback|selected-scene-atomic-patch|engine-owned-text-layout|persistent-surface|shared-raster-thumbnails|document-driven-video|dom-gated-animation";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -35,6 +35,7 @@ export interface LiveSceneSurface {
   resolveImage(resourceId: string, bytes: Uint8Array): void;
   listMissingFonts(): Array<{ family: string }>;
   addFont(family: string, bytes: Uint8Array): void;
+  setFallbackFonts(families: string[]): void;
   replaceNode(bytes: Uint8Array): boolean;
   getNodeAbsoluteBoundingBox(
     target: string
@@ -94,7 +95,43 @@ export interface CreateLiveSceneRuntimeOptions {
   resolveFont?: (
     family: string
   ) => Promise<Uint8Array | readonly Uint8Array[] | null>;
+  fallbackFonts?: readonly string[];
   afterPaint?: () => Promise<void>;
+}
+
+export interface LiveSceneRasterSurface {
+  loadSceneGrida(bytes: Uint8Array): void;
+  switchScene(sceneId: string): void;
+  loadedSceneIds(): string[];
+  addImageWithId(bytes: Uint8Array, resourceId: string): unknown;
+  addFont(family: string, bytes: Uint8Array): void;
+  setFallbackFonts(families: string[]): void;
+  exportNodeAs(
+    nodeId: string,
+    options: {
+      format: "PNG";
+      constraints: { type: "scale-to-fit-width"; value: number };
+    }
+  ): { data: Uint8Array };
+  dispose(): void;
+}
+
+export interface CreateLiveSceneThumbnailRendererOptions {
+  locateFile?: (path: string, version: string) => string;
+  createSurface?: () => Promise<LiveSceneRasterSurface>;
+}
+
+export interface RenderLiveSceneThumbnailOptions {
+  archive: Uint8Array | LiveSceneArchive;
+  snapshot: unknown;
+  sceneId: string;
+  expectedSchemaVersion: string;
+  width: number;
+  fallbackFonts?: readonly string[];
+  resolveImage?: (resourceId: string) => Promise<Uint8Array | null>;
+  resolveFont?: (
+    family: string
+  ) => Promise<Uint8Array | readonly Uint8Array[] | null>;
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -187,6 +224,234 @@ function descendants(
     for (const child of snapshot.document.links[id] ?? []) pending.push(child);
   }
   return seen;
+}
+
+function addFontFamily(out: Set<string>, value: unknown): void {
+  if (typeof value !== "string") return;
+  const family = value.trim();
+  if (family && !family.startsWith("var(")) out.add(family);
+}
+
+/** Font families authored into one canonical scene. This is the authority for
+ * hydration; renderer-reported misses are only an additional diagnostic seam
+ * because an embedded fallback can otherwise hide an unavailable family. */
+export function collectLiveSceneFontFamilies(
+  value: unknown,
+  sceneId: string
+): string[] {
+  if (!isRecord(value) || !isRecord(value.document)) return [];
+  const document = value.document;
+  if (!isRecord(document.nodes) || !isRecord(document.links)) return [];
+  const snapshot = value as unknown as LiveSceneSnapshot;
+  if (!isRecord(document.nodes[sceneId])) return [];
+  const families = new Set<string>();
+  for (const id of descendants(snapshot, sceneId)) {
+    const node = document.nodes[id];
+    if (!isRecord(node)) continue;
+    addFontFamily(families, node.font_family);
+    if (isRecord(node.default_style)) {
+      addFontFamily(families, node.default_style.font_family);
+    }
+    if (Array.isArray(node.styled_runs)) {
+      for (const run of node.styled_runs) {
+        if (isRecord(run) && isRecord(run.style)) {
+          addFontFamily(families, run.style.font_family);
+        }
+      }
+    }
+  }
+  return [...families].sort((a, b) => a.localeCompare(b));
+}
+
+function resolvedFontFaces(
+  resolved: Uint8Array | readonly Uint8Array[] | null
+): Uint8Array[] {
+  return resolved instanceof Uint8Array
+    ? resolved.byteLength > 0
+      ? [resolved]
+      : []
+    : Array.isArray(resolved)
+      ? resolved.filter(
+          (bytes): bytes is Uint8Array =>
+            bytes instanceof Uint8Array && bytes.byteLength > 0
+        )
+      : [];
+}
+
+interface FontHydrationSurface {
+  addFont(family: string, bytes: Uint8Array): void;
+  setFallbackFonts(families: string[]): void;
+}
+
+async function hydrateSceneFonts(options: {
+  surface: FontHydrationSurface;
+  requestedFonts: Iterable<string>;
+  fallbackFonts?: readonly string[];
+  resolveFont?: (
+    family: string
+  ) => Promise<Uint8Array | readonly Uint8Array[] | null>;
+}): Promise<string[]> {
+  const requestedFonts = new Set(
+    [...options.requestedFonts].map((family) => family.trim()).filter(Boolean)
+  );
+  const unresolved: string[] = [];
+  for (const family of requestedFonts) {
+    const faces = resolvedFontFaces(
+      options.resolveFont ? await options.resolveFont(family) : null
+    );
+    if (faces.length === 0) unresolved.push(family);
+    else for (const bytes of faces) options.surface.addFont(family, bytes);
+  }
+  const fallbackFonts = [
+    ...new Set(
+      (options.fallbackFonts ?? [])
+        .map((family) => family.trim())
+        .filter(Boolean)
+    ),
+  ];
+  for (const family of fallbackFonts) {
+    if (requestedFonts.has(family)) continue;
+    const faces = resolvedFontFaces(
+      options.resolveFont ? await options.resolveFont(family) : null
+    );
+    for (const bytes of faces) options.surface.addFont(family, bytes);
+  }
+  if (fallbackFonts.length > 0) options.surface.setFallbackFonts(fallbackFonts);
+  return [...new Set(unresolved)].sort();
+}
+
+function collectLiveSceneImageResources(
+  snapshot: LiveSceneSnapshot,
+  sceneId: string
+): string[] {
+  const resources = new Set<string>();
+  const inspect = (value: unknown): void => {
+    if (typeof value === "string") {
+      if (/^res:\/\/images\/[a-zA-Z0-9._-]+$/.test(value)) resources.add(value);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      for (const item of value) inspect(item);
+      return;
+    }
+    for (const item of Object.values(value as UnknownRecord)) inspect(item);
+  };
+  for (const id of descendants(snapshot, sceneId))
+    inspect(snapshot.document.nodes[id]);
+  return [...resources].sort();
+}
+
+function sceneExportNodeId(
+  snapshot: LiveSceneSnapshot,
+  sceneId: string
+): string {
+  const children = snapshot.document.links[sceneId] ?? [];
+  return (
+    children.find((id) => snapshot.document.nodes[id]?.type === "container") ??
+    sceneId
+  );
+}
+
+/** Persistent single-surface raster renderer for tile workers. It consumes the
+ * same archive, scene identity, font hydration, and Grida engine as live output
+ * without allocating one WebGL context per tile. */
+export class LiveSceneThumbnailRenderer {
+  private readonly surface: LiveSceneRasterSurface;
+  private readonly registeredImages = new Set<string>();
+  private readonly registeredFonts = new Set<string>();
+
+  constructor(surface: LiveSceneRasterSurface) {
+    this.surface = surface;
+  }
+
+  async render(options: RenderLiveSceneThumbnailOptions): Promise<Uint8Array> {
+    const snapshot = normalizeSnapshot(
+      options.snapshot,
+      options.expectedSchemaVersion
+    );
+    if (snapshot.document.nodes[options.sceneId]?.type !== "scene") {
+      throw new LiveSceneRuntimeError(
+        "missing-scene",
+        `The target scene ${options.sceneId} is not in the canonical document.`
+      );
+    }
+    const archive =
+      options.archive instanceof Uint8Array
+        ? unpackLiveSceneArchive(options.archive)
+        : options.archive;
+    for (const [filename, bytes] of Object.entries(archive.images)) {
+      const resourceId = resourceIdForArchiveImage(filename);
+      if (this.registeredImages.has(resourceId)) continue;
+      this.surface.addImageWithId(bytes, resourceId);
+      this.registeredImages.add(resourceId);
+    }
+    for (const resourceId of collectLiveSceneImageResources(
+      snapshot,
+      options.sceneId
+    )) {
+      if (this.registeredImages.has(resourceId)) continue;
+      const bytes = options.resolveImage
+        ? await options.resolveImage(resourceId)
+        : null;
+      if (!bytes) continue;
+      this.surface.addImageWithId(bytes, resourceId);
+      this.registeredImages.add(resourceId);
+    }
+    await hydrateSceneFonts({
+      surface: this.surface,
+      requestedFonts: collectLiveSceneFontFamilies(snapshot, options.sceneId),
+      fallbackFonts: options.fallbackFonts,
+      resolveFont: async (family) => {
+        if (this.registeredFonts.has(family)) return null;
+        const resolved = options.resolveFont
+          ? await options.resolveFont(family)
+          : null;
+        if (resolvedFontFaces(resolved).length > 0)
+          this.registeredFonts.add(family);
+        return resolved;
+      },
+    });
+    this.surface.loadSceneGrida(archive.document);
+    if (!this.surface.loadedSceneIds().includes(options.sceneId)) {
+      throw new LiveSceneRuntimeError(
+        "missing-scene",
+        `The engine did not decode target scene ${options.sceneId}.`
+      );
+    }
+    this.surface.switchScene(options.sceneId);
+    const result = this.surface.exportNodeAs(
+      sceneExportNodeId(snapshot, options.sceneId),
+      {
+        format: "PNG",
+        constraints: {
+          type: "scale-to-fit-width",
+          value: Math.max(1, Math.round(options.width)),
+        },
+      }
+    );
+    return new Uint8Array(result.data);
+  }
+
+  dispose(): void {
+    this.surface.dispose();
+  }
+}
+
+export async function createLiveSceneThumbnailRenderer(
+  options: CreateLiveSceneThumbnailRendererOptions = {}
+): Promise<LiveSceneThumbnailRenderer> {
+  const surface = options.createSurface
+    ? await options.createSurface()
+    : await createCanvas({
+        backend: "raster",
+        width: 16,
+        height: 16,
+        locateFile: options.locateFile,
+        useEmbeddedFonts: true,
+        config: { skip_layout: false },
+      });
+  return new LiveSceneThumbnailRenderer(surface);
 }
 
 export function scanLiveSceneCapabilities(
@@ -542,28 +807,21 @@ export async function createLiveSceneRuntime(
       );
     }
 
-    const unresolvedFonts: string[] = [];
+    const declaredFonts = collectLiveSceneFontFamilies(
+      snapshot,
+      options.sceneId
+    );
+    const requestedFonts = new Set(declaredFonts);
     for (const { family } of surface.listMissingFonts()) {
-      const resolved = options.resolveFont
-        ? await options.resolveFont(family)
-        : null;
-      const faces =
-        resolved instanceof Uint8Array
-          ? [resolved]
-          : Array.isArray(resolved)
-            ? resolved.filter(
-                (bytes): bytes is Uint8Array =>
-                  bytes instanceof Uint8Array && bytes.byteLength > 0
-              )
-            : [];
-      if (faces.length > 0) {
-        for (const bytes of faces) surface.addFont(family, bytes);
-      } else {
-        unresolvedFonts.push(family);
-      }
+      if (family.trim()) requestedFonts.add(family.trim());
     }
-    if (unresolvedFonts.length > 0) {
-      stats.unresolvedFonts = [...new Set(unresolvedFonts)].sort();
+    stats.unresolvedFonts = await hydrateSceneFonts({
+      surface,
+      requestedFonts,
+      fallbackFonts: options.fallbackFonts,
+      resolveFont: options.resolveFont,
+    });
+    if (stats.unresolvedFonts.length > 0 && !options.fallbackFonts?.length) {
       throw new LiveSceneRuntimeError(
         "missing-font",
         `The live scene is missing ${stats.unresolvedFonts.length} font family or families.`

@@ -142,6 +142,31 @@ function fixture(): GridaImportDocumentV1 {
 }
 
 describe("native document compiler", () => {
+  it("coalesces adjacent imported runs that compile to the same native style", async () => {
+    const input = fixture();
+    const text = input.scenes[0]!.nodes[1] as Extract<
+      (typeof input.scenes)[number]["nodes"][number],
+      { kind: "text" }
+    >;
+    text.text = "Luke 5:4";
+    text.runs = [
+      { start: 0, end: 4, style: { ...text.defaultStyle } },
+      { start: 4, end: 8, style: { ...text.defaultStyle } },
+    ];
+
+    const compiled = await compileNativeDocument(input);
+    const snapshot = JSON.parse(compiled.snapshotJson) as {
+      document: {
+        nodes: Record<string, { type: string; styled_runs?: unknown[] }>;
+      };
+    };
+    const nativeText = Object.values(snapshot.document.nodes).find(
+      (node) => node.type === "text"
+    );
+
+    expect(nativeText?.styled_runs).toHaveLength(1);
+  });
+
   it("is deterministic and preserves native layers through archive reopen", async () => {
     const first = await compileNativeDocument(fixture());
     const second = await compileNativeDocument(fixture());

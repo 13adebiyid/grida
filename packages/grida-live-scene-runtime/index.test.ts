@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createLiveSceneRuntime, scanLiveSceneCapabilities } from "./index";
+import {
+  createLiveSceneRuntime,
+  createLiveSceneThumbnailRenderer,
+  scanLiveSceneCapabilities,
+} from "./index";
 
 const snapshot = {
   version: "test-schema",
@@ -52,6 +56,7 @@ function surface() {
     resolveImage: vi.fn<(resourceId: string, bytes: Uint8Array) => void>(),
     listMissingFonts: vi.fn<() => Array<{ family: string }>>(() => []),
     addFont: vi.fn<(family: string, bytes: Uint8Array) => void>(),
+    setFallbackFonts: vi.fn<(families: string[]) => void>(),
     replaceNode: vi.fn<(bytes: Uint8Array) => boolean>(() => true),
     getNodeAbsoluteBoundingBox: vi.fn<
       (target: string) => {
@@ -282,5 +287,93 @@ describe("live scene runtime", () => {
       "Inter",
       new Uint8Array([3, 4])
     );
+  });
+
+  it("hydrates document-declared fonts and applies one shared fallback policy", async () => {
+    const fake = surface();
+    const requested: string[] = [];
+    await createLiveSceneRuntime({
+      canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
+      archive: { document: new Uint8Array([1]), images: {} },
+      snapshot: {
+        ...snapshot,
+        document: {
+          ...snapshot.document,
+          nodes: {
+            ...snapshot.document.nodes,
+            body: {
+              ...snapshot.document.nodes.body,
+              default_style: {
+                font_family: "Berlin Sans FBDemi",
+                font_size: 108,
+              },
+            },
+          },
+        },
+      },
+      sceneId: "scene",
+      expectedSchemaVersion: "test-schema",
+      createSurface: async () => fake,
+      fallbackFonts: ["Times New Roman", "Inter"],
+      resolveFont: async (family) => {
+        requested.push(family);
+        return family === "Times New Roman" ? new Uint8Array([7, 8]) : null;
+      },
+      afterPaint: async () => {},
+    });
+
+    expect(requested).toContain("Berlin Sans FBDemi");
+    expect(fake.listMissingFonts).toHaveBeenCalled();
+    expect(fake.addFont).toHaveBeenCalledWith(
+      "Times New Roman",
+      new Uint8Array([7, 8])
+    );
+    expect(fake.setFallbackFonts).toHaveBeenCalledWith([
+      "Times New Roman",
+      "Inter",
+    ]);
+  });
+
+  it("rasterizes canonical tile scenes through the shared Grida document path", async () => {
+    const raster = {
+      loadSceneGrida: vi.fn<(bytes: Uint8Array) => void>(),
+      switchScene: vi.fn<(sceneId: string) => void>(),
+      loadedSceneIds: vi.fn<() => string[]>(() => ["scene"]),
+      addImageWithId: vi.fn<(bytes: Uint8Array, resourceId: string) => void>(),
+      addFont: vi.fn<(family: string, bytes: Uint8Array) => void>(),
+      setFallbackFonts: vi.fn<(families: string[]) => void>(),
+      exportNodeAs: vi.fn<
+        (
+          nodeId: string,
+          options: {
+            format: "PNG";
+            constraints: { type: "scale-to-fit-width"; value: number };
+          }
+        ) => { data: Uint8Array }
+      >(() => ({ data: new Uint8Array([137, 80, 78, 71]) })),
+      dispose: vi.fn<() => void>(),
+    };
+    const renderer = await createLiveSceneThumbnailRenderer({
+      createSurface: async () => raster,
+    });
+
+    const bytes = await renderer.render({
+      archive: { document: new Uint8Array([1, 2, 3]), images: {} },
+      snapshot,
+      sceneId: "scene",
+      expectedSchemaVersion: "test-schema",
+      width: 320,
+      fallbackFonts: ["Inter"],
+    });
+
+    expect(raster.loadSceneGrida).toHaveBeenCalledWith(
+      new Uint8Array([1, 2, 3])
+    );
+    expect(raster.switchScene).toHaveBeenCalledWith("scene");
+    expect(raster.exportNodeAs).toHaveBeenCalledWith("stage", {
+      format: "PNG",
+      constraints: { type: "scale-to-fit-width", value: 320 },
+    });
+    expect(bytes).toEqual(new Uint8Array([137, 80, 78, 71]));
   });
 });

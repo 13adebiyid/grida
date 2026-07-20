@@ -1881,7 +1881,8 @@ impl AttributedString {
         merged.push(self.runs[0].clone());
         for run in &self.runs[1..] {
             let last = merged.last_mut().unwrap();
-            if last.style.is_same_rendering(&run.style)
+            if last.end == run.start
+                && last.style.is_same_rendering(&run.style)
                 && last.fills == run.fills
                 && last.strokes == run.strokes
                 && last.stroke_width == run.stroke_width
