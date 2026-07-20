@@ -1,9 +1,9 @@
 import init, { createCanvas } from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.5.0";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.5.1";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
-  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|document-driven-video|dom-gated-animation";
+  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -124,6 +124,7 @@ export interface LiveSceneRasterSurface {
   addImageWithId(bytes: Uint8Array, resourceId: string): unknown;
   addFont(family: string, bytes: Uint8Array): void;
   setFallbackFonts(families: string[]): void;
+  replaceNode(bytes: Uint8Array): boolean;
   exportNodeAs(
     nodeId: string,
     options: {
@@ -137,6 +138,7 @@ export interface LiveSceneRasterSurface {
 export interface CreateLiveSceneThumbnailRendererOptions {
   locateFile?: (path: string, version: string) => string;
   createSurface?: () => Promise<LiveSceneRasterSurface>;
+  encodeNode?: (node: LiveSceneNode) => Uint8Array;
 }
 
 export interface RenderLiveSceneThumbnailOptions {
@@ -146,6 +148,7 @@ export interface RenderLiveSceneThumbnailOptions {
   expectedSchemaVersion: string;
   width: number;
   fallbackFonts?: readonly string[];
+  patch?: LiveScenePatch;
   resolveImage?: (resourceId: string) => Promise<Uint8Array | null>;
   resolveFont?: (
     family: string
@@ -448,16 +451,62 @@ function sceneExportNodeId(
   );
 }
 
+function projectLiveSceneNode(
+  node: LiveSceneNode,
+  id: string,
+  patch: LiveScenePatch
+): LiveSceneNode {
+  const next: LiveSceneNode = { ...node };
+  if (patch.text && Object.prototype.hasOwnProperty.call(patch.text, id)) {
+    if (node.type !== "text" && node.type !== "tspan") {
+      throw new LiveSceneRuntimeError(
+        "patch-node-type",
+        `The live text patch target ${id} is not a text node.`
+      );
+    }
+    const nextText = patch.text[id] ?? "";
+    next.text = nextText;
+    const previousText = typeof node.text === "string" ? node.text : "";
+    if (Array.isArray(next.styled_runs) && nextText !== previousText) {
+      if (!isRecord(next.default_style)) {
+        throw new LiveSceneRuntimeError(
+          "patch-node-style",
+          `The attributed text patch target ${id} has no default style.`
+        );
+      }
+      next.styled_runs = [
+        {
+          start: 0,
+          end: nextText.length,
+          style: { ...next.default_style },
+        },
+      ];
+    }
+  }
+  if (
+    patch.visibility &&
+    Object.prototype.hasOwnProperty.call(patch.visibility, id)
+  ) {
+    next.active = patch.visibility[id] === true;
+  }
+  return next;
+}
+
 /** Persistent single-surface raster renderer for tile workers. It consumes the
  * same archive, scene identity, font hydration, and Grida engine as live output
  * without allocating one WebGL context per tile. */
 export class LiveSceneThumbnailRenderer {
   private readonly surface: LiveSceneRasterSurface;
+  private readonly encodeNode: (node: LiveSceneNode) => Uint8Array;
   private readonly registeredImages = new Set<string>();
   private readonly registeredFonts = new Set<string>();
 
-  constructor(surface: LiveSceneRasterSurface) {
+  constructor(
+    surface: LiveSceneRasterSurface,
+    encodeNode: (node: LiveSceneNode) => Uint8Array
+  ) {
     this.surface = surface;
+    this.encodeNode = encodeNode;
   }
 
   async render(options: RenderLiveSceneThumbnailOptions): Promise<Uint8Array> {
@@ -515,6 +564,36 @@ export class LiveSceneThumbnailRenderer {
       );
     }
     this.surface.switchScene(options.sceneId);
+    const patch = options.patch ?? {};
+    const patchIds = [
+      ...new Set([
+        ...Object.keys(patch.text ?? {}),
+        ...Object.keys(patch.visibility ?? {}),
+      ]),
+    ].sort();
+    const activeNodeIds = descendants(snapshot, options.sceneId);
+    for (const id of patchIds) {
+      const node = snapshot.document.nodes[id];
+      if (!node) {
+        throw new LiveSceneRuntimeError(
+          "patch-node-missing",
+          `The live patch target ${id} is not in the canonical document.`
+        );
+      }
+      if (!activeNodeIds.has(id)) {
+        throw new LiveSceneRuntimeError(
+          "patch-node-outside-scene",
+          `The live patch target ${id} is outside the selected thumbnail scene.`
+        );
+      }
+      const projected = projectLiveSceneNode(node, id, patch);
+      if (!this.surface.replaceNode(this.encodeNode(projected))) {
+        throw new LiveSceneRuntimeError(
+          "patch-rejected",
+          `The engine rejected the thumbnail patch at ${id}.`
+        );
+      }
+    }
     const result = this.surface.exportNodeAs(
       sceneExportNodeId(snapshot, options.sceneId),
       {
@@ -546,7 +625,10 @@ export async function createLiveSceneThumbnailRenderer(
         useEmbeddedFonts: true,
         config: { skip_layout: false },
       });
-  return new LiveSceneThumbnailRenderer(surface);
+  return new LiveSceneThumbnailRenderer(
+    surface,
+    options.encodeNode ?? ((node) => io.GRID.encodeNode(node as never))
+  );
 }
 
 export function scanLiveSceneCapabilities(
@@ -847,36 +929,12 @@ class LiveSceneRuntime {
         : this.nodes[id];
       const base = previous;
       if (!previous || !base) continue;
-      const next: LiveSceneNode = { ...base };
-      if (patch.text && Object.prototype.hasOwnProperty.call(patch.text, id)) {
-        const nextText = patch.text[id] ?? "";
-        next.text = nextText;
-        const previousText = typeof base.text === "string" ? base.text : "";
-        if (Array.isArray(next.styled_runs) && nextText !== previousText) {
-          if (!isRecord(next.default_style)) {
-            this.stats.patchFailures += 1;
-            throw new LiveSceneRuntimeError(
-              "patch-node-style",
-              `The attributed text patch target ${id} has no default style.`
-            );
-          }
-          // Attributed text requires one complete run. Rebase the authored
-          // content onto its canonical dominant style, exactly as the native
-          // Quick Edit path does, so font/color never fall back at output.
-          next.styled_runs = [
-            {
-              start: 0,
-              end: nextText.length,
-              style: { ...next.default_style },
-            },
-          ];
-        }
-      }
-      if (
-        patch.visibility &&
-        Object.prototype.hasOwnProperty.call(patch.visibility, id)
-      ) {
-        next.active = patch.visibility[id] === true;
+      let next: LiveSceneNode;
+      try {
+        next = projectLiveSceneNode(base, id, patch);
+      } catch (error) {
+        this.stats.patchFailures += 1;
+        throw error;
       }
       changes.push({
         id,

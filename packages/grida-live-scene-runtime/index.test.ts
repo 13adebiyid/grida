@@ -1192,6 +1192,7 @@ describe("live scene runtime", () => {
       addImageWithId: vi.fn<(bytes: Uint8Array, resourceId: string) => void>(),
       addFont: vi.fn<(family: string, bytes: Uint8Array) => void>(),
       setFallbackFonts: vi.fn<(families: string[]) => void>(),
+      replaceNode: vi.fn<(bytes: Uint8Array) => boolean>(() => true),
       exportNodeAs: vi.fn<
         (
           nodeId: string,
@@ -1225,5 +1226,80 @@ describe("live scene runtime", () => {
       constraints: { type: "scale-to-fit-width", value: 320 },
     });
     expect(bytes).toEqual(new Uint8Array([137, 80, 78, 71]));
+  });
+
+  it("applies the requested live text and visibility projection before exporting a thumbnail", async () => {
+    const thumbnailSnapshot = structuredClone(snapshot);
+    Object.assign(thumbnailSnapshot.document.nodes.body, {
+      default_style: { font_family: "Authored Body", fill: "#ffd700" },
+      styled_runs: [
+        {
+          start: 0,
+          end: 8,
+          style: { font_family: "Authored Body", fill: "#ffd700" },
+        },
+      ],
+    });
+    const replaced: Array<Record<string, unknown>> = [];
+    const raster = {
+      loadSceneGrida: vi.fn<(bytes: Uint8Array) => void>(),
+      switchScene: vi.fn<(sceneId: string) => void>(),
+      loadedSceneIds: vi.fn<() => string[]>(() => ["scene"]),
+      addImageWithId: vi.fn<(bytes: Uint8Array, resourceId: string) => void>(),
+      addFont: vi.fn<(family: string, bytes: Uint8Array) => void>(),
+      setFallbackFonts: vi.fn<(families: string[]) => void>(),
+      replaceNode: vi.fn<(bytes: Uint8Array) => boolean>((bytes) => {
+        replaced.push(
+          JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>
+        );
+        return true;
+      }),
+      exportNodeAs: vi.fn<
+        (
+          nodeId: string,
+          options: {
+            format: "PNG";
+            constraints: { type: "scale-to-fit-width"; value: number };
+          }
+        ) => { data: Uint8Array }
+      >(() => ({ data: new Uint8Array([137, 80, 78, 71]) })),
+      dispose: vi.fn<() => void>(),
+    };
+    const renderer = await createLiveSceneThumbnailRenderer({
+      createSurface: async () => raster,
+      encodeNode: (node) => new TextEncoder().encode(JSON.stringify(node)),
+    });
+
+    await renderer.render({
+      archive: { document: new Uint8Array([1, 2, 3]), images: {} },
+      snapshot: thumbnailSnapshot,
+      sceneId: "scene",
+      expectedSchemaVersion: "test-schema",
+      width: 320,
+      fallbackFonts: ["Inter"],
+      patch: {
+        text: { body: "PRAYER 1" },
+        visibility: { auto: false },
+      },
+    });
+
+    expect(raster.switchScene).toHaveBeenCalledWith("scene");
+    expect(replaced).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "body",
+          text: "PRAYER 1",
+          styled_runs: [
+            {
+              start: 0,
+              end: 8,
+              style: { font_family: "Authored Body", fill: "#ffd700" },
+            },
+          ],
+        }),
+        expect.objectContaining({ id: "auto", active: false }),
+      ])
+    );
+    expect(raster.exportNodeAs).toHaveBeenCalledTimes(1);
   });
 });

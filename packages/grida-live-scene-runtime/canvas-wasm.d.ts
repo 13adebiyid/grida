@@ -53,6 +53,7 @@ declare module "@grida/canvas-wasm" {
     addImageWithId(bytes: Uint8Array, resourceId: string): unknown;
     addFont(family: string, bytes: Uint8Array): void;
     setFallbackFonts(families: string[]): void;
+    replaceNode(bytes: Uint8Array): boolean;
     exportNodeAs(
       nodeId: string,
       options: {
