@@ -52,6 +52,7 @@ import {
   withMissingFamilyFallbacks,
 } from "./bible-helper-local-fonts";
 import { suppressImportedContentMarkings } from "./rhema-import-normalizers";
+import { rhemaDocumentAuthority } from "./rhema-document-authority";
 import {
   PlusIcon,
   Cross1Icon,
@@ -1475,11 +1476,19 @@ export default function CanvasPlayground({
           }
         }
       } else {
-        // No src: try to load from OPFS, otherwise use provided document or empty
+        // Canonical native sessions always hydrate from Rhema's entry-owned,
+        // content-addressed document. OPFS is only a cache/draft store there:
+        // it can still contain the pre-canonical scene ids written immediately
+        // before Rhema repacked the previous save. Non-native sessions retain
+        // the established OPFS-first behavior.
         setDocumentReady(false);
 
+        const documentAuthority = rhemaDocumentAuthority(
+          canonicalNativeDocument
+        );
+
         try {
-          if (opfs) {
+          if (opfs && documentAuthority === "opfs-cache") {
             // Bug E (BH 2026-05-28): the binary GRID/FlatBuffers schema in
             // `format/grida.fbs` has no `metadata` / `userdata` field, so
             // `io.GRID.encode` strips scene userdata on save. The Rhema
@@ -1726,6 +1735,7 @@ export default function CanvasPlayground({
     parentOrigin,
     room_id,
     workspace,
+    canonicalNativeDocument,
   ]);
 
   // Reconstruct a seeded theme's backdrop once the canvas surface (and its SVG
@@ -1859,7 +1869,10 @@ export default function CanvasPlayground({
           <FontFamilyListProvider fonts={fonts}>
             <LocalFontFamiliesProvider families={localFontFamilies}>
               <StandaloneDocumentEditor editor={instance}>
-                <div className="w-full h-full flex flex-row">
+                <div
+                  className="w-full h-full flex flex-row"
+                  data-rhema-editor-ready={ready ? "true" : "false"}
+                >
                   <SidebarProvider className="w-full h-full">
                     <main className="w-full h-full select-none relative">
                       <WindowGlobalCurrentEditorProvider />
