@@ -250,7 +250,7 @@ export class Scene {
     const [ptr, len] = ffi.allocBytes(this.module, bytes);
     const ok = this.module._replace_node_grida(this.appptr, ptr, len);
     ffi.free(this.module, ptr, len);
-    return ok;
+    return Boolean(ok);
   }
 
   /**

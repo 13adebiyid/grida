@@ -153,6 +153,35 @@ describe("WASM API Validation", () => {
     ).toThrow(/disposed/i);
   });
 
+  it("raster Canvas exposes the node replacement used by scene projections", async () => {
+    const canvas = await createCanvas({
+      backend: "raster",
+      width: 64,
+      height: 64,
+      useEmbeddedFonts: true,
+    });
+    try {
+      const docJson = readFileSync(
+        resolve(process.cwd(), "example/rectangle.grida1"),
+        "utf8"
+      );
+      const parsed = JSON.parse(docJson) as {
+        document: {
+          nodes: Record<string, Parameters<typeof io.GRID.encodeNode>[0]>;
+        };
+      };
+      canvas.loadSceneGrida(io.GRID.encode(parsed.document as never));
+      const [sceneId] = canvas.loadedSceneIds();
+      expect(sceneId).toBeTruthy();
+      canvas.switchScene(sceneId!);
+      const node = parsed.document.nodes.rectangle;
+      expect(node).toBeTruthy();
+      expect(canvas.replaceNode(io.GRID.encodeNode(node))).toBe(true);
+    } finally {
+      canvas.dispose();
+    }
+  });
+
   describe("C exports", () => {
     EXPECTED_FUNCTIONS.forEach(({ name, paramCount }) => {
       it(`exposes ${name}`, () => {

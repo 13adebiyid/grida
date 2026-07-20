@@ -355,6 +355,13 @@ export class Canvas {
     return this._scene.addImageWithId(data, rid);
   }
 
+  /** Replace an existing node in the active scene without rebuilding the
+   * document. Raster consumers use this to project cue text and fitted styles
+   * into the same canonical scene used by live output. */
+  replaceNode(bytes: Uint8Array): boolean {
+    return this._scene.replaceNode(bytes);
+  }
+
   exportNodeAs(id: string, format: types.ExportAs): { data: Uint8Array } {
     return this._scene.exportNodeAs(id, format);
   }
