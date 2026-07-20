@@ -1,9 +1,9 @@
 import init, { createCanvas } from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.4.0";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.5.0";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
-  "live-scene-runtime-v1|archive-grid|scene-identity|document-font-introspection|shared-font-fallback|selected-scene-atomic-patch|engine-owned-text-layout|persistent-surface|shared-raster-thumbnails|document-driven-video|dom-gated-animation";
+  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|document-driven-video|dom-gated-animation";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -49,6 +49,17 @@ export interface LiveSceneSurface {
   dispose(): void;
 }
 
+interface OwnedLiveSceneSurface {
+  surface: LiveSceneSurface;
+  dispose(): void;
+}
+
+interface EmscriptenGLContextRegistry {
+  currentContext?: { handle: number } | null;
+  makeContextCurrent(handle: number): void;
+  deleteContext(handle: number): void;
+}
+
 export interface LiveSceneCapabilities {
   eligible: boolean;
   reason: "eligible" | "invalid-document" | "missing-scene" | "animation";
@@ -89,14 +100,21 @@ export interface CreateLiveSceneRuntimeOptions {
   expectedSchemaVersion: string;
   locateFile?: (path: string, version: string) => string;
   dpr?: number;
-  createSurface?: () => Promise<LiveSceneSurface>;
+  /** Cancels runtime creation only. A successfully returned runtime owns its
+   * surface until dispose() is called, independently of this signal. */
+  signal?: AbortSignal;
+  createSurface?: (signal?: AbortSignal) => Promise<LiveSceneSurface>;
   encodeNode?: (node: LiveSceneNode) => Uint8Array;
-  resolveImage?: (resourceId: string) => Promise<Uint8Array | null>;
+  resolveImage?: (
+    resourceId: string,
+    signal?: AbortSignal
+  ) => Promise<Uint8Array | null>;
   resolveFont?: (
-    family: string
+    family: string,
+    signal?: AbortSignal
   ) => Promise<Uint8Array | readonly Uint8Array[] | null>;
   fallbackFonts?: readonly string[];
-  afterPaint?: () => Promise<void>;
+  afterPaint?: (signal?: AbortSignal) => Promise<void>;
 }
 
 export interface LiveSceneRasterSurface {
@@ -132,6 +150,69 @@ export interface RenderLiveSceneThumbnailOptions {
   resolveFont?: (
     family: string
   ) => Promise<Uint8Array | readonly Uint8Array[] | null>;
+}
+
+function abortError(): DOMException {
+  return new DOMException(
+    "Live scene runtime creation was aborted.",
+    "AbortError"
+  );
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError();
+}
+
+/** Races one external creation boundary against cancellation. The operation is
+ * invoked only while the signal is live, late rejections are consumed, and an
+ * optional late value adopter can release resources created after cancellation. */
+function awaitAbortable<T>(
+  operation: () => PromiseLike<T>,
+  signal?: AbortSignal,
+  onLateResolve?: (value: T) => void
+): Promise<T> {
+  throwIfAborted(signal);
+  let pending: PromiseLike<T>;
+  try {
+    pending = operation();
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  if (!signal) return Promise.resolve(pending);
+  if (signal.aborted) {
+    void Promise.resolve(pending)
+      .then((value) => onLateResolve?.(value))
+      .catch(() => {});
+    return Promise.reject(abortError());
+  }
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      reject(abortError());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    void Promise.resolve(pending)
+      .then(
+        (value) => {
+          if (settled) {
+            onLateResolve?.(value);
+            return;
+          }
+          settled = true;
+          signal.removeEventListener("abort", onAbort);
+          resolve(value);
+        },
+        (error: unknown) => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener("abort", onAbort);
+          reject(error);
+        }
+      )
+      .catch(() => {});
+  });
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -288,8 +369,10 @@ async function hydrateSceneFonts(options: {
   requestedFonts: Iterable<string>;
   fallbackFonts?: readonly string[];
   resolveFont?: (
-    family: string
+    family: string,
+    signal?: AbortSignal
   ) => Promise<Uint8Array | readonly Uint8Array[] | null>;
+  signal?: AbortSignal;
 }): Promise<string[]> {
   const requestedFonts = new Set(
     [...options.requestedFonts].map((family) => family.trim()).filter(Boolean)
@@ -297,8 +380,14 @@ async function hydrateSceneFonts(options: {
   const unresolved: string[] = [];
   for (const family of requestedFonts) {
     const faces = resolvedFontFaces(
-      options.resolveFont ? await options.resolveFont(family) : null
+      options.resolveFont
+        ? await awaitAbortable(
+            () => options.resolveFont!(family, options.signal),
+            options.signal
+          )
+        : null
     );
+    throwIfAborted(options.signal);
     if (faces.length === 0) unresolved.push(family);
     else for (const bytes of faces) options.surface.addFont(family, bytes);
   }
@@ -312,8 +401,14 @@ async function hydrateSceneFonts(options: {
   for (const family of fallbackFonts) {
     if (requestedFonts.has(family)) continue;
     const faces = resolvedFontFaces(
-      options.resolveFont ? await options.resolveFont(family) : null
+      options.resolveFont
+        ? await awaitAbortable(
+            () => options.resolveFont!(family, options.signal),
+            options.signal
+          )
+        : null
     );
+    throwIfAborted(options.signal);
     for (const bytes of faces) options.surface.addFont(family, bytes);
   }
   if (fallbackFonts.length > 0) options.surface.setFallbackFonts(fallbackFonts);
@@ -528,6 +623,52 @@ function defaultAfterPaint(): Promise<void> {
   });
 }
 
+function afterFinalAnimationFrame(callback: () => void): void {
+  if (typeof requestAnimationFrame !== "function") {
+    setTimeout(callback, 0);
+    return;
+  }
+  requestAnimationFrame(() => requestAnimationFrame(() => callback()));
+}
+
+function ownLiveSceneSurface(
+  surface: LiveSceneSurface,
+  afterDispose?: () => void
+): OwnedLiveSceneSurface {
+  let disposed = false;
+  return {
+    surface,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      let disposeError: unknown;
+      try {
+        surface.dispose();
+      } catch (error: unknown) {
+        disposeError = error;
+      }
+      try {
+        afterDispose?.();
+      } catch (releaseError: unknown) {
+        if (disposeError === undefined) throw releaseError;
+      }
+      if (disposeError !== undefined) throw disposeError;
+    },
+  };
+}
+
+function releaseWebGLContextAfterStop(
+  registry: EmscriptenGLContextRegistry,
+  handle: number
+): void {
+  afterFinalAnimationFrame(() => {
+    if (registry.currentContext?.handle === handle) {
+      registry.makeContextCurrent(0);
+    }
+    registry.deleteContext(handle);
+  });
+}
+
 function resourceIdForArchiveImage(filename: string): string {
   const basename = filename.split("/").pop() ?? filename;
   const dot = basename.lastIndexOf(".");
@@ -572,20 +713,34 @@ function fitCamera(
   ]);
 }
 
+interface LiveSceneNodeChange {
+  id: string;
+  previous: LiveSceneNode;
+  next: LiveSceneNode;
+  previousBytes: Uint8Array;
+  nextBytes: Uint8Array;
+}
+
 class LiveSceneRuntime {
   private readonly surface: LiveSceneSurface;
+  private readonly disposeSurface: () => void;
   private readonly canvas: HTMLCanvasElement;
   private readonly dpr: number;
   private readonly encodeNode: (node: LiveSceneNode) => Uint8Array;
   private readonly afterPaint: () => Promise<void>;
+  private readonly snapshot: LiveSceneSnapshot;
+  private readonly canonicalNodes: Record<string, LiveSceneNode>;
   private readonly nodes: Record<string, LiveSceneNode>;
-  private readonly activeNodeIds: ReadonlySet<string>;
+  private readonly patchedNodeIds = new Set<string>();
+  private activeSceneId: string;
+  private activeNodeIds: ReadonlySet<string>;
   private disposed = false;
-  private patchQueue: Promise<void> = Promise.resolve();
+  private mutationQueue: Promise<void> = Promise.resolve();
   private readonly stats: LiveSceneDiagnostics;
 
   constructor(
     surface: LiveSceneSurface,
+    disposeSurface: () => void,
     canvas: HTMLCanvasElement,
     dpr: number,
     snapshot: LiveSceneSnapshot,
@@ -595,18 +750,220 @@ class LiveSceneRuntime {
     stats: LiveSceneDiagnostics
   ) {
     this.surface = surface;
+    this.disposeSurface = disposeSurface;
     this.canvas = canvas;
     this.dpr = dpr;
     this.encodeNode = encodeNode;
     this.afterPaint = afterPaint;
-    this.nodes = Object.fromEntries(
+    this.snapshot = snapshot;
+    this.canonicalNodes = Object.fromEntries(
       Object.entries(snapshot.document.nodes).map(([id, node]) => [
         id,
         { ...node },
       ])
     );
+    this.nodes = Object.fromEntries(
+      Object.entries(this.canonicalNodes).map(([id, node]) => [id, { ...node }])
+    );
+    this.activeSceneId = sceneId;
     this.activeNodeIds = descendants(snapshot, sceneId);
     this.stats = stats;
+  }
+
+  private assertNotDisposed(): void {
+    if (this.disposed) {
+      throw new LiveSceneRuntimeError(
+        "runtime-disposed",
+        "The live scene runtime has been disposed."
+      );
+    }
+  }
+
+  private poison(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    try {
+      this.disposeSurface();
+    } catch {
+      // The integrity failure that forced disposal remains authoritative.
+    }
+  }
+
+  private enqueueMutation(operation: () => Promise<void>): Promise<void> {
+    const pending = this.mutationQueue.then(operation, operation);
+    this.mutationQueue = pending.catch(() => {});
+    return pending;
+  }
+
+  private patchIds(patch: LiveScenePatch): string[] {
+    return [
+      ...new Set([
+        ...Object.keys(patch.text ?? {}),
+        ...Object.keys(patch.visibility ?? {}),
+      ]),
+    ].sort();
+  }
+
+  private planNodeChanges(
+    patch: LiveScenePatch,
+    allowedNodeIds: ReadonlySet<string>,
+    resetToCanonical: boolean
+  ): LiveSceneNodeChange[] {
+    const patchIds = this.patchIds(patch);
+    for (const id of patchIds) {
+      const current = this.nodes[id];
+      if (!current) {
+        this.stats.patchFailures += 1;
+        throw new LiveSceneRuntimeError(
+          "patch-node-missing",
+          `The live patch target ${id} is not in the active document.`
+        );
+      }
+      if (!allowedNodeIds.has(id)) {
+        this.stats.patchFailures += 1;
+        throw new LiveSceneRuntimeError(
+          "patch-node-outside-scene",
+          `The live patch target ${id} is outside the active scene.`
+        );
+      }
+      if (
+        patch.text &&
+        Object.prototype.hasOwnProperty.call(patch.text, id) &&
+        current.type !== "text" &&
+        current.type !== "tspan"
+      ) {
+        this.stats.patchFailures += 1;
+        throw new LiveSceneRuntimeError(
+          "patch-node-type",
+          `The live text patch target ${id} is not a text node.`
+        );
+      }
+    }
+
+    const changes: LiveSceneNodeChange[] = [];
+    for (const id of patchIds) {
+      const previous = resetToCanonical
+        ? this.canonicalNodes[id]
+        : this.nodes[id];
+      const base = previous;
+      if (!previous || !base) continue;
+      const next: LiveSceneNode = { ...base };
+      if (patch.text && Object.prototype.hasOwnProperty.call(patch.text, id)) {
+        const nextText = patch.text[id] ?? "";
+        next.text = nextText;
+        const previousText = typeof base.text === "string" ? base.text : "";
+        if (Array.isArray(next.styled_runs) && nextText !== previousText) {
+          if (!isRecord(next.default_style)) {
+            this.stats.patchFailures += 1;
+            throw new LiveSceneRuntimeError(
+              "patch-node-style",
+              `The attributed text patch target ${id} has no default style.`
+            );
+          }
+          // Attributed text requires one complete run. Rebase the authored
+          // content onto its canonical dominant style, exactly as the native
+          // Quick Edit path does, so font/color never fall back at output.
+          next.styled_runs = [
+            {
+              start: 0,
+              end: nextText.length,
+              style: { ...next.default_style },
+            },
+          ];
+        }
+      }
+      if (
+        patch.visibility &&
+        Object.prototype.hasOwnProperty.call(patch.visibility, id)
+      ) {
+        next.active = patch.visibility[id] === true;
+      }
+      changes.push({
+        id,
+        previous,
+        next,
+        previousBytes: this.encodeNode(previous),
+        nextBytes: this.encodeNode(next),
+      });
+    }
+    return changes;
+  }
+
+  private commitNodeChanges(
+    changes: readonly LiveSceneNodeChange[],
+    updateNodes = true
+  ): void {
+    const attempted: LiveSceneNodeChange[] = [];
+    let failure: { change: LiveSceneNodeChange; cause: unknown } | undefined;
+    for (const change of changes) {
+      attempted.push(change);
+      try {
+        if (!this.surface.replaceNode(change.nextBytes)) {
+          throw new LiveSceneRuntimeError(
+            "patch-rejected",
+            `The engine rejected the atomic live patch at ${change.id}.`
+          );
+        }
+      } catch (cause: unknown) {
+        failure = { change, cause };
+        break;
+      }
+    }
+    if (failure) {
+      let rollbackCause: unknown;
+      for (const change of [...attempted].reverse()) {
+        try {
+          if (!this.surface.replaceNode(change.previousBytes)) {
+            throw new Error(
+              `The engine rejected rollback for live node ${change.id}.`
+            );
+          }
+        } catch (error: unknown) {
+          rollbackCause ??= error;
+        }
+      }
+      this.stats.patchFailures += 1;
+      if (rollbackCause !== undefined) {
+        // The JS mirror can no longer prove equality with the engine graph.
+        // Poison this owner rather than allowing a later cue to build on a
+        // partially mutated surface.
+        this.poison();
+        throw new LiveSceneRuntimeError(
+          "patch-rollback-failed",
+          `The engine could not restore the atomic live patch at ${failure.change.id}.`,
+          { cause: rollbackCause }
+        );
+      }
+      if (failure.cause instanceof LiveSceneRuntimeError) throw failure.cause;
+      throw new LiveSceneRuntimeError(
+        "patch-rejected",
+        `The engine threw while applying the atomic live patch at ${failure.change.id}.`,
+        { cause: failure.cause }
+      );
+    }
+    if (updateNodes) {
+      for (const change of changes) this.nodes[change.id] = change.next;
+    }
+  }
+
+  private activeOverrides(nodeIds: ReadonlySet<string>): LiveSceneNodeChange[] {
+    return [...this.patchedNodeIds]
+      .filter((id) => nodeIds.has(id))
+      .sort()
+      .flatMap((id) => {
+        const canonical = this.canonicalNodes[id];
+        const current = this.nodes[id];
+        if (!canonical || !current) return [];
+        return [
+          {
+            id,
+            previous: canonical,
+            next: current,
+            previousBytes: this.encodeNode(canonical),
+            nextBytes: this.encodeNode(current),
+          },
+        ];
+      });
   }
 
   diagnostics(): LiveSceneDiagnostics {
@@ -626,105 +983,96 @@ class LiveSceneRuntime {
     this.surface.redraw();
   }
 
-  applyPatch(patch: LiveScenePatch): Promise<void> {
-    const apply = async () => {
-      if (this.disposed) {
+  /** Switches synchronously to the target's canonical clone, applies the
+   * complete cue projection in the same JS turn, then paints exactly once. */
+  activateScene(sceneId: string, patch: LiveScenePatch = {}): Promise<void> {
+    return this.enqueueMutation(async () => {
+      this.assertNotDisposed();
+      if (this.snapshot.document.nodes[sceneId]?.type !== "scene") {
         throw new LiveSceneRuntimeError(
-          "runtime-disposed",
-          "The live scene runtime has been disposed."
+          "missing-scene",
+          `The target scene ${sceneId} is not in the canonical document.`
         );
       }
-      const ids = new Set([
-        ...Object.keys(patch.text ?? {}),
-        ...Object.keys(patch.visibility ?? {}),
-      ]);
-      const changes: Array<{
-        id: string;
-        previous: LiveSceneNode;
-        next: LiveSceneNode;
-        previousBytes: Uint8Array;
-        nextBytes: Uint8Array;
-      }> = [];
-      for (const id of [...ids].sort()) {
-        const current = this.nodes[id];
-        if (!current) {
-          this.stats.patchFailures += 1;
-          throw new LiveSceneRuntimeError(
-            "patch-node-missing",
-            `The live patch target ${id} is not in the active document.`
-          );
-        }
-        if (!this.activeNodeIds.has(id)) {
-          this.stats.patchFailures += 1;
-          throw new LiveSceneRuntimeError(
-            "patch-node-outside-scene",
-            `The live patch target ${id} is outside the active scene.`
-          );
-        }
-        const next: LiveSceneNode = { ...current };
-        if (
-          patch.text &&
-          Object.prototype.hasOwnProperty.call(patch.text, id)
-        ) {
-          if (current.type !== "text" && current.type !== "tspan") {
-            this.stats.patchFailures += 1;
-            throw new LiveSceneRuntimeError(
-              "patch-node-type",
-              `The live text patch target ${id} is not a text node.`
-            );
-          }
-          next.text = patch.text[id] ?? "";
-          if (Array.isArray(next.styled_runs)) next.styled_runs = [];
-        }
-        if (
-          patch.visibility &&
-          Object.prototype.hasOwnProperty.call(patch.visibility, id)
-        ) {
-          next.active = patch.visibility[id] === true;
-        }
-        changes.push({
-          id,
-          previous: current,
-          next,
-          previousBytes: this.encodeNode(current),
-          nextBytes: this.encodeNode(next),
-        });
+      if (!this.surface.loadedSceneIds().includes(sceneId)) {
+        throw new LiveSceneRuntimeError(
+          "missing-scene",
+          `The engine did not decode target scene ${sceneId}.`
+        );
       }
-      if (changes.length === 0) return;
-      const committed: typeof changes = [];
-      for (const change of changes) {
-        if (!this.surface.replaceNode(change.nextBytes)) {
-          for (const prior of committed.reverse()) {
-            this.surface.replaceNode(prior.previousBytes);
-          }
-          this.stats.patchFailures += 1;
+
+      const targetNodeIds = descendants(this.snapshot, sceneId);
+      const changes = this.planNodeChanges(patch, targetNodeIds, true);
+      const previousSceneId = this.activeSceneId;
+      const previousNodeIds = this.activeNodeIds;
+      const previousOverrides = this.activeOverrides(previousNodeIds);
+      try {
+        // switchScene clones the immutable scene held by the engine. Node
+        // replacement only targets the currently selected renderer graph, so
+        // overrides must follow the switch. No RAF can interleave this
+        // synchronous sequence, and redraw happens only after every override.
+        this.surface.switchScene(sceneId);
+        this.commitNodeChanges(changes, false);
+        this.activeSceneId = sceneId;
+        this.activeNodeIds = targetNodeIds;
+        fitCamera(this.surface, this.canvas, this.dpr);
+        this.surface.redraw();
+        await this.afterPaint();
+      } catch (error) {
+        try {
+          this.surface.switchScene(previousSceneId);
+          this.commitNodeChanges(previousOverrides, false);
+          this.activeSceneId = previousSceneId;
+          this.activeNodeIds = previousNodeIds;
+          fitCamera(this.surface, this.canvas, this.dpr);
+          this.surface.redraw();
+        } catch (rollbackCause) {
+          this.poison();
           throw new LiveSceneRuntimeError(
-            "patch-rejected",
-            `The engine rejected the atomic live patch at ${change.id}.`
+            "activation-rollback-failed",
+            `The runtime could not restore scene ${previousSceneId} after activation failed.`,
+            { cause: rollbackCause }
           );
         }
-        committed.push(change);
+        throw error;
+      }
+
+      for (const id of targetNodeIds) {
+        const canonical = this.canonicalNodes[id];
+        if (canonical) this.nodes[id] = { ...canonical };
       }
       for (const change of changes) this.nodes[change.id] = change.next;
+      for (const id of targetNodeIds) this.patchedNodeIds.delete(id);
+      const patchIds = this.patchIds(patch);
+      for (const id of patchIds) this.patchedNodeIds.add(id);
+      if (patchIds.length > 0) this.stats.patchesApplied += 1;
+    });
+  }
+
+  applyPatch(patch: LiveScenePatch): Promise<void> {
+    return this.enqueueMutation(async () => {
+      this.assertNotDisposed();
+      const changes = this.planNodeChanges(patch, this.activeNodeIds, false);
+      if (changes.length === 0) return;
+      this.commitNodeChanges(changes);
+      for (const id of this.patchIds(patch)) this.patchedNodeIds.add(id);
       this.surface.redraw();
       await this.afterPaint();
       this.stats.patchesApplied += 1;
-    };
-    const pending = this.patchQueue.then(apply, apply);
-    this.patchQueue = pending.catch(() => {});
-    return pending;
+    });
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.surface.dispose();
+    this.disposeSurface();
   }
 }
 
 export async function createLiveSceneRuntime(
   options: CreateLiveSceneRuntimeOptions
 ): Promise<LiveSceneRuntime> {
+  throwIfAborted(options.signal);
   const startedAt = performance.now();
   const snapshot = normalizeSnapshot(
     options.snapshot,
@@ -751,26 +1099,48 @@ export async function createLiveSceneRuntime(
     );
   }
   const dpr = Math.max(0.25, Math.min(8, options.dpr ?? 1));
-  const surface = options.createSurface
-    ? await options.createSurface()
-    : await (async () => {
-        const factory = await init(
-          options.locateFile ? { locateFile: options.locateFile } : undefined
-        );
-        return factory.createWebGLCanvasSurface(options.canvas, {
-          use_embedded_fonts: true,
-          config: { skip_layout: false },
-        }) as LiveSceneSurface;
-      })();
-  const stats: LiveSceneDiagnostics = {
-    archiveLoads: 0,
-    patchesApplied: 0,
-    patchFailures: 0,
-    firstFrameMs: 0,
-    unresolvedImages: [],
-    unresolvedFonts: [],
-  };
+  let ownedSurface: OwnedLiveSceneSurface | undefined;
   try {
+    const acquiredSurface = await awaitAbortable<OwnedLiveSceneSurface>(
+      () =>
+        options.createSurface
+          ? options
+              .createSurface(options.signal)
+              .then((surface) => ownLiveSceneSurface(surface))
+          : (async () => {
+              const factory = await init(
+                options.locateFile
+                  ? { locateFile: options.locateFile }
+                  : undefined
+              );
+              throwIfAborted(options.signal);
+              const surface = factory.createWebGLCanvasSurface(options.canvas, {
+                use_embedded_fonts: true,
+                config: { skip_layout: false },
+              }) as LiveSceneSurface;
+              const registry = factory.module.GL;
+              const contextHandle = registry.currentContext?.handle;
+              return ownLiveSceneSurface(
+                surface,
+                typeof contextHandle === "number" && contextHandle > 0
+                  ? () => releaseWebGLContextAfterStop(registry, contextHandle)
+                  : undefined
+              );
+            })(),
+      options.signal,
+      (lateSurface) => lateSurface.dispose()
+    );
+    ownedSurface = acquiredSurface;
+    throwIfAborted(options.signal);
+    const surface = acquiredSurface.surface;
+    const stats: LiveSceneDiagnostics = {
+      archiveLoads: 0,
+      patchesApplied: 0,
+      patchFailures: 0,
+      firstFrameMs: 0,
+      unresolvedImages: [],
+      unresolvedFonts: [],
+    };
     surface.loadSceneGrida(archive.document);
     stats.archiveLoads = 1;
     if (!surface.loadedSceneIds().includes(options.sceneId)) {
@@ -779,70 +1149,148 @@ export async function createLiveSceneRuntime(
         `The engine did not decode target scene ${options.sceneId}.`
       );
     }
+    const registeredImages = new Set<string>();
+    for (const [filename, bytes] of Object.entries(archive.images)) {
+      const resourceId = resourceIdForArchiveImage(filename);
+      surface.resolveImage(resourceId, bytes);
+      registeredImages.add(resourceId);
+    }
+    const attemptedExternalImages = new Set<string>();
+    const unresolvedImages = new Set<string>();
+    const resolveExternalImage = async (resourceId: string): Promise<void> => {
+      if (
+        registeredImages.has(resourceId) ||
+        attemptedExternalImages.has(resourceId)
+      )
+        return;
+      attemptedExternalImages.add(resourceId);
+      const bytes = options.resolveImage
+        ? await awaitAbortable(
+            () => options.resolveImage!(resourceId, options.signal),
+            options.signal
+          )
+        : null;
+      throwIfAborted(options.signal);
+      if (bytes) {
+        surface.resolveImage(resourceId, bytes);
+        registeredImages.add(resourceId);
+        unresolvedImages.delete(resourceId);
+      } else {
+        unresolvedImages.add(resourceId);
+      }
+    };
+    // Scene activation is synchronous by contract, so every image referenced
+    // anywhere in the immutable document must be hydrated during boot.
+    for (const sceneId of snapshot.document.scenes_ref) {
+      for (const resourceId of collectLiveSceneImageResources(
+        snapshot,
+        sceneId
+      )) {
+        await resolveExternalImage(resourceId);
+      }
+    }
+    if (unresolvedImages.size > 0) {
+      stats.unresolvedImages = [...unresolvedImages].sort();
+      throw new LiveSceneRuntimeError(
+        "missing-image",
+        `The live scene is missing ${unresolvedImages.size} image resource(s).`
+      );
+    }
+
+    const requestedFonts = new Set<string>();
+    for (const sceneId of snapshot.document.scenes_ref) {
+      for (const family of collectLiveSceneFontFamilies(snapshot, sceneId)) {
+        requestedFonts.add(family);
+      }
+    }
+    const unresolvedFonts = new Set(
+      await hydrateSceneFonts({
+        surface,
+        requestedFonts,
+        fallbackFonts: options.fallbackFonts,
+        resolveFont: options.resolveFont,
+        signal: options.signal,
+      })
+    );
+    throwIfAborted(options.signal);
+    stats.unresolvedFonts = [...unresolvedFonts].sort();
+    if (unresolvedFonts.size > 0 && !options.fallbackFonts?.length) {
+      throw new LiveSceneRuntimeError(
+        "missing-font",
+        `The live scene is missing ${unresolvedFonts.size} font family or families.`
+      );
+    }
+
+    // No renderable scene is selected until every declarative document
+    // resource is registered. switchScene queues the engine frame, so this
+    // ordering prevents even a provisional fallback-font/image paint.
     surface.switchScene(options.sceneId);
     surface.runtime_renderer_set_isolation_stage_preset?.(0);
     surface.resize(options.canvas.width, options.canvas.height);
     fitCamera(surface, options.canvas, dpr);
-
-    for (const [filename, bytes] of Object.entries(archive.images)) {
-      surface.resolveImage(resourceIdForArchiveImage(filename), bytes);
-    }
     surface.redraw();
     const afterPaint = options.afterPaint ?? defaultAfterPaint;
-    await afterPaint();
+    await awaitAbortable(() => afterPaint(options.signal), options.signal);
+    throwIfAborted(options.signal);
 
-    const unresolvedImages: string[] = [];
     for (const resourceId of surface.drainMissingImages()) {
-      const bytes = options.resolveImage
-        ? await options.resolveImage(resourceId)
-        : null;
-      if (bytes) surface.resolveImage(resourceId, bytes);
-      else unresolvedImages.push(resourceId);
+      await resolveExternalImage(resourceId);
     }
-    if (unresolvedImages.length > 0) {
-      stats.unresolvedImages = [...new Set(unresolvedImages)].sort();
+    if (unresolvedImages.size > 0) {
+      stats.unresolvedImages = [...unresolvedImages].sort();
       throw new LiveSceneRuntimeError(
         "missing-image",
         `The live scene is missing ${stats.unresolvedImages.length} image resource(s).`
       );
     }
 
-    const declaredFonts = collectLiveSceneFontFamilies(
-      snapshot,
-      options.sceneId
-    );
-    const requestedFonts = new Set(declaredFonts);
+    const supplementalFonts = new Set<string>();
     for (const { family } of surface.listMissingFonts()) {
-      if (family.trim()) requestedFonts.add(family.trim());
+      const normalized = family.trim();
+      if (!normalized) continue;
+      if (requestedFonts.has(normalized)) unresolvedFonts.add(normalized);
+      else supplementalFonts.add(normalized);
     }
-    stats.unresolvedFonts = await hydrateSceneFonts({
+    for (const family of await hydrateSceneFonts({
       surface,
-      requestedFonts,
-      fallbackFonts: options.fallbackFonts,
+      requestedFonts: supplementalFonts,
       resolveFont: options.resolveFont,
-    });
-    if (stats.unresolvedFonts.length > 0 && !options.fallbackFonts?.length) {
+      signal: options.signal,
+    })) {
+      unresolvedFonts.add(family);
+    }
+    throwIfAborted(options.signal);
+    stats.unresolvedFonts = [...unresolvedFonts].sort();
+    if (unresolvedFonts.size > 0 && !options.fallbackFonts?.length) {
       throw new LiveSceneRuntimeError(
         "missing-font",
-        `The live scene is missing ${stats.unresolvedFonts.length} font family or families.`
+        `The live scene is missing ${unresolvedFonts.size} font family or families.`
       );
     }
 
     surface.redraw();
-    await afterPaint();
+    await awaitAbortable(() => afterPaint(options.signal), options.signal);
+    throwIfAborted(options.signal);
     stats.firstFrameMs = Math.max(0, performance.now() - startedAt);
-    return new LiveSceneRuntime(
+    const runtime = new LiveSceneRuntime(
       surface,
+      acquiredSurface.dispose,
       options.canvas,
       dpr,
       snapshot,
       options.sceneId,
       options.encodeNode ?? ((node) => io.GRID.encodeNode(node as never)),
-      afterPaint,
+      () => afterPaint(),
       stats
     );
+    ownedSurface = undefined;
+    return runtime;
   } catch (error) {
-    surface.dispose();
+    try {
+      ownedSurface?.dispose();
+    } catch {
+      // Cleanup must not mask the boot/validation failure that triggered it.
+    }
     throw error;
   }
 }

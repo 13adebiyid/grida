@@ -26,6 +26,13 @@ declare module "@grida/canvas-wasm" {
   }
 
   interface ApplicationFactory {
+    readonly module: {
+      GL: {
+        currentContext?: { handle: number } | null;
+        makeContextCurrent(handle: number): void;
+        deleteContext(handle: number): void;
+      };
+    };
     createWebGLCanvasSurface(
       canvas: HTMLCanvasElement,
       options?: {
