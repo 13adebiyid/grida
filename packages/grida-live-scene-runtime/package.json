@@ -1,6 +1,6 @@
 {
   "name": "@grida/live-scene-runtime",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "private": false,
   "description": "Source-neutral Grida canvas runtime for presentation surfaces",
   "license": "MIT",

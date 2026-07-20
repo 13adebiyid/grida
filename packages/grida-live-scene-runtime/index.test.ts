@@ -1279,6 +1279,7 @@ describe("live scene runtime", () => {
       fallbackFonts: ["Inter"],
       patch: {
         text: { body: "PRAYER 1" },
+        textStyles: { body: { fontSize: 42 } },
         visibility: { auto: false },
       },
     });
@@ -1289,11 +1290,20 @@ describe("live scene runtime", () => {
         expect.objectContaining({
           id: "body",
           text: "PRAYER 1",
+          default_style: {
+            font_family: "Authored Body",
+            fill: "#ffd700",
+            font_size: 42,
+          },
           styled_runs: [
             {
               start: 0,
               end: 8,
-              style: { font_family: "Authored Body", fill: "#ffd700" },
+              style: {
+                font_family: "Authored Body",
+                fill: "#ffd700",
+                font_size: 42,
+              },
             },
           ],
         }),

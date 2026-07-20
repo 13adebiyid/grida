@@ -1,9 +1,9 @@
 import init, { createCanvas } from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.5.1";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.5.2";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
-  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation";
+  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|fitted-text-style-patch|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -70,6 +70,7 @@ export interface LiveSceneCapabilities {
 
 export interface LiveScenePatch {
   text?: Readonly<Record<string, string>>;
+  textStyles?: Readonly<Record<string, { fontSize?: number }>>;
   visibility?: Readonly<Record<string, boolean>>;
 }
 
@@ -457,14 +458,49 @@ function projectLiveSceneNode(
   patch: LiveScenePatch
 ): LiveSceneNode {
   const next: LiveSceneNode = { ...node };
-  if (patch.text && Object.prototype.hasOwnProperty.call(patch.text, id)) {
-    if (node.type !== "text" && node.type !== "tspan") {
+  const hasTextPatch = Boolean(
+    patch.text && Object.prototype.hasOwnProperty.call(patch.text, id)
+  );
+  const textStylePatch = patch.textStyles?.[id];
+  if (
+    (hasTextPatch || textStylePatch) &&
+    node.type !== "text" &&
+    node.type !== "tspan"
+  ) {
+    throw new LiveSceneRuntimeError(
+      "patch-node-type",
+      `The live text patch target ${id} is not a text node.`
+    );
+  }
+  if (textStylePatch?.fontSize !== undefined) {
+    const fontSize = textStylePatch.fontSize;
+    if (!Number.isFinite(fontSize) || fontSize <= 0 || fontSize > 4096) {
       throw new LiveSceneRuntimeError(
-        "patch-node-type",
-        `The live text patch target ${id} is not a text node.`
+        "patch-text-style",
+        `The live text style patch at ${id} has an invalid font size.`
       );
     }
-    const nextText = patch.text[id] ?? "";
+    if (node.type === "tspan") {
+      next.font_size = fontSize;
+    } else {
+      if (!isRecord(next.default_style)) {
+        throw new LiveSceneRuntimeError(
+          "patch-node-style",
+          `The attributed text patch target ${id} has no default style.`
+        );
+      }
+      next.default_style = { ...next.default_style, font_size: fontSize };
+      if (Array.isArray(next.styled_runs)) {
+        next.styled_runs = next.styled_runs.map((run) =>
+          isRecord(run) && isRecord(run.style)
+            ? { ...run, style: { ...run.style, font_size: fontSize } }
+            : run
+        );
+      }
+    }
+  }
+  if (hasTextPatch) {
+    const nextText = patch.text?.[id] ?? "";
     next.text = nextText;
     const previousText = typeof node.text === "string" ? node.text : "";
     if (Array.isArray(next.styled_runs) && nextText !== previousText) {
@@ -568,6 +604,7 @@ export class LiveSceneThumbnailRenderer {
     const patchIds = [
       ...new Set([
         ...Object.keys(patch.text ?? {}),
+        ...Object.keys(patch.textStyles ?? {}),
         ...Object.keys(patch.visibility ?? {}),
       ]),
     ].sort();
@@ -881,6 +918,7 @@ class LiveSceneRuntime {
     return [
       ...new Set([
         ...Object.keys(patch.text ?? {}),
+        ...Object.keys(patch.textStyles ?? {}),
         ...Object.keys(patch.visibility ?? {}),
       ]),
     ].sort();
