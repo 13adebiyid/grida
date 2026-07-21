@@ -1,9 +1,9 @@
 import init, { createCanvas } from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.5.4";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.5.6";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
-  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|fitted-text-style-patch|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation|same-scene-canonical-reprojection";
+  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|fitted-text-style-patch|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation|same-scene-canonical-reprojection|presentation-archive-background-projection";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -99,6 +99,10 @@ export interface CreateLiveSceneRuntimeOptions {
   snapshot: unknown;
   sceneId: string;
   expectedSchemaVersion: string;
+  /** Projects only the selected scene root to transparent in the archive
+   * loaded by this presentation runtime. The caller retains the authored
+   * archive and creates a distinct runtime generation when ownership changes. */
+  transparentSceneBackground?: boolean;
   locateFile?: (path: string, version: string) => string;
   dpr?: number;
   /** Cancels runtime creation only. A successfully returned runtime owns its
@@ -735,6 +739,55 @@ export function unpackLiveSceneArchive(bytes: Uint8Array): LiveSceneArchive {
   }
 }
 
+/** Creates a presentation-only archive projection before the engine owns any
+ * pixels. Scene nodes cannot be changed through the per-node WASM API, so the
+ * root fill and its direct stage-container fill must be projected in the
+ * authoritative GRID document rather than patched after authored pixels have
+ * already painted. Deliberate foreground children of the stage are retained. */
+export function projectLiveSceneArchiveBackground(
+  documentBytes: Uint8Array,
+  sceneId: string,
+  transparent: boolean,
+  schemaVersion?: string
+): Uint8Array {
+  if (!transparent) return documentBytes;
+  try {
+    const document = io.GRID.decode(documentBytes) as unknown as UnknownRecord;
+    if (!isRecord(document.nodes)) {
+      throw new Error("The GRID document has no node map.");
+    }
+    const scene = document.nodes[sceneId];
+    if (!isRecord(scene) || scene.type !== "scene") {
+      throw new Error(`The GRID document has no scene ${sceneId}.`);
+    }
+    const projectedScene = { ...scene };
+    delete projectedScene.background_color;
+    const projectedNodes = { ...document.nodes, [sceneId]: projectedScene };
+    const links = isRecord(document.links) ? document.links : {};
+    const stageIds = Array.isArray(links[sceneId]) ? links[sceneId] : [];
+    for (const stageId of stageIds) {
+      if (typeof stageId !== "string") continue;
+      const stage = projectedNodes[stageId];
+      if (!isRecord(stage) || stage.type !== "container") continue;
+      const projectedStage = { ...stage };
+      delete projectedStage.fill;
+      delete projectedStage.fill_paints;
+      projectedNodes[stageId] = projectedStage;
+    }
+    const projectedDocument = {
+      ...document,
+      nodes: projectedNodes,
+    };
+    return io.GRID.encode(projectedDocument as never, schemaVersion);
+  } catch (cause) {
+    throw new LiveSceneRuntimeError(
+      "background-projection-failed",
+      `The live scene archive could not project scene ${sceneId} for external media.`,
+      { cause }
+    );
+  }
+}
+
 function defaultAfterPaint(): Promise<void> {
   if (typeof requestAnimationFrame !== "function") return Promise.resolve();
   return new Promise((resolve) => {
@@ -1288,6 +1341,12 @@ export async function createLiveSceneRuntime(
       "The Grida archive has no document bytes."
     );
   }
+  const presentationDocument = projectLiveSceneArchiveBackground(
+    archive.document,
+    options.sceneId,
+    options.transparentSceneBackground === true,
+    options.expectedSchemaVersion
+  );
   const dpr = Math.max(0.25, Math.min(8, options.dpr ?? 1));
   let ownedSurface: OwnedLiveSceneSurface | undefined;
   try {
@@ -1331,7 +1390,7 @@ export async function createLiveSceneRuntime(
       unresolvedImages: [],
       unresolvedFonts: [],
     };
-    surface.loadSceneGrida(archive.document);
+    surface.loadSceneGrida(presentationDocument);
     stats.archiveLoads = 1;
     if (!surface.loadedSceneIds().includes(options.sceneId)) {
       throw new LiveSceneRuntimeError(
