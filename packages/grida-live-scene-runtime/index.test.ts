@@ -627,11 +627,19 @@ describe("live scene runtime", () => {
       activeNodes[node.id] = node;
       return true;
     });
-    let failPresentation = false;
-    const afterPaint = vi.fn<() => Promise<void>>(async () => {
-      if (!failPresentation) return;
-      failPresentation = false;
-      throw new Error("presentation failed");
+    const rollbackPaint = deferred<void>();
+    let presentationPhase: "normal" | "reject-target" | "block-rollback" =
+      "normal";
+    const afterPaint = vi.fn<() => Promise<void>>(() => {
+      if (presentationPhase === "reject-target") {
+        presentationPhase = "block-rollback";
+        return Promise.reject(new Error("presentation failed"));
+      }
+      if (presentationPhase === "block-rollback") {
+        presentationPhase = "normal";
+        return rollbackPaint.promise;
+      }
+      return Promise.resolve();
     });
     const runtime = await createLiveSceneRuntime({
       canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
@@ -650,18 +658,32 @@ describe("live scene runtime", () => {
       },
     });
 
-    failPresentation = true;
-    await expect(
-      runtime.activateScene("scene", {
-        text: { body: "Rejected body" },
-      })
-    ).rejects.toThrow("presentation failed");
+    const paintsBeforeActivation = afterPaint.mock.calls.length;
+    presentationPhase = "reject-target";
+    const rejectedActivation = runtime.activateScene("scene", {
+      text: { body: "Rejected body" },
+    });
+    await vi.waitFor(() =>
+      expect(afterPaint).toHaveBeenCalledTimes(paintsBeforeActivation + 2)
+    );
+    const followUp = runtime.applyPatch({
+      text: { body: "Recovered body" },
+    });
 
     expect(fake.switchScene.mock.calls).toEqual([["scene"]]);
     expect(activeNodes.body).toMatchObject({ text: "Prior body" });
     expect(activeNodes.auto).toMatchObject({ text: "Prior auto" });
-    await runtime.applyPatch({ text: { body: "Recovered body" } });
+    expect(await promptOutcome(rejectedActivation)).toMatchObject({
+      status: "pending",
+    });
+    expect(await promptOutcome(followUp)).toMatchObject({ status: "pending" });
+    expect(afterPaint).toHaveBeenCalledTimes(paintsBeforeActivation + 2);
+
+    rollbackPaint.resolve();
+    await expect(rejectedActivation).rejects.toThrow("presentation failed");
+    await followUp;
     expect(activeNodes.body).toMatchObject({ text: "Recovered body" });
+    expect(afterPaint).toHaveBeenCalledTimes(paintsBeforeActivation + 3);
     expect(fake.dispose).not.toHaveBeenCalled();
   });
 
