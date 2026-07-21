@@ -1,9 +1,9 @@
 import init, { createCanvas } from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.5.3";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.5.4";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
-  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|fitted-text-style-patch|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation";
+  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|fitted-text-style-patch|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation|same-scene-canonical-reprojection";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -1062,6 +1062,63 @@ class LiveSceneRuntime {
       });
   }
 
+  /** Build one complete replacement for the retained active graph. Targets
+   * patched by the prior cue but omitted by the next cue are restored from the
+   * immutable canonical snapshot; requested targets are projected from that
+   * same snapshot. `previous` always mirrors the graph currently owned by the
+   * engine so commitNodeChanges can roll back an interrupted transaction. */
+  private planActiveSceneProjection(
+    patch: LiveScenePatch
+  ): LiveSceneNodeChange[] {
+    const requestedChanges = this.planNodeChanges(
+      patch,
+      this.activeNodeIds,
+      true
+    );
+    const requestedById = new Map(
+      requestedChanges.map((change) => [change.id, change] as const)
+    );
+    const targetIds = [
+      ...new Set([
+        ...[...this.patchedNodeIds].filter((id) => this.activeNodeIds.has(id)),
+        ...requestedById.keys(),
+      ]),
+    ].sort();
+
+    return targetIds.map((id) => {
+      const previous = this.nodes[id];
+      const canonical = this.canonicalNodes[id];
+      if (!previous || !canonical) {
+        this.stats.patchFailures += 1;
+        throw new LiveSceneRuntimeError(
+          "patch-node-missing",
+          `The live patch target ${id} is not in the active document.`
+        );
+      }
+      const next = requestedById.get(id)?.next ?? { ...canonical };
+      return {
+        id,
+        previous,
+        next,
+        previousBytes: this.encodeNode(previous),
+        nextBytes: this.encodeNode(next),
+      };
+    });
+  }
+
+  private rollbackNodeChanges(changes: readonly LiveSceneNodeChange[]): void {
+    this.commitNodeChanges(
+      [...changes].reverse().map((change) => ({
+        id: change.id,
+        previous: change.next,
+        next: change.previous,
+        previousBytes: change.nextBytes,
+        nextBytes: change.previousBytes,
+      })),
+      false
+    );
+  }
+
   diagnostics(): LiveSceneDiagnostics {
     return {
       ...this.stats,
@@ -1079,8 +1136,10 @@ class LiveSceneRuntime {
     this.surface.redraw();
   }
 
-  /** Switches synchronously to the target's canonical clone, applies the
-   * complete cue projection in the same JS turn, then paints exactly once. */
+  /** Activates one complete cue projection from canonical nodes, then paints
+   * exactly once. Cross-scene cues switch to the target's immutable clone;
+   * same-scene cues atomically reproject the retained renderer graph because
+   * reselecting an already-active engine scene can discard node replacement. */
   activateScene(sceneId: string, patch: LiveScenePatch = {}): Promise<void> {
     return this.enqueueMutation(async () => {
       this.assertNotDisposed();
@@ -1095,6 +1154,41 @@ class LiveSceneRuntime {
           "missing-scene",
           `The engine did not decode target scene ${sceneId}.`
         );
+      }
+
+      if (sceneId === this.activeSceneId) {
+        const changes = this.planActiveSceneProjection(patch);
+        let committed = false;
+        try {
+          this.commitNodeChanges(changes, false);
+          committed = true;
+          fitCamera(this.surface, this.canvas, this.dpr);
+          this.surface.redraw();
+          await this.afterPaint();
+        } catch (error) {
+          if (!committed) throw error;
+          try {
+            this.rollbackNodeChanges(changes);
+            fitCamera(this.surface, this.canvas, this.dpr);
+            this.surface.redraw();
+            await this.afterPaint();
+          } catch (rollbackCause) {
+            this.poison();
+            throw new LiveSceneRuntimeError(
+              "activation-rollback-failed",
+              `The runtime could not restore scene ${sceneId} after activation failed.`,
+              { cause: rollbackCause }
+            );
+          }
+          throw error;
+        }
+
+        for (const change of changes) this.nodes[change.id] = change.next;
+        for (const id of this.activeNodeIds) this.patchedNodeIds.delete(id);
+        const patchIds = this.patchIds(patch);
+        for (const id of patchIds) this.patchedNodeIds.add(id);
+        if (patchIds.length > 0) this.stats.patchesApplied += 1;
+        return;
       }
 
       const targetNodeIds = descendants(this.snapshot, sceneId);

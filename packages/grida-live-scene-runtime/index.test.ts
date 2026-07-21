@@ -535,6 +535,193 @@ describe("live scene runtime", () => {
     expect(requestFrame).not.toHaveBeenCalled();
   });
 
+  it("reprojects the already-active scene from canonical nodes without switching it again", async () => {
+    const fake = surface();
+    const canonicalNodes = snapshot.document.nodes as Record<
+      string,
+      Record<string, unknown>
+    >;
+    let activeNodes: Record<string, Record<string, unknown>> = {};
+    fake.switchScene.mockImplementation(() => {
+      activeNodes = Object.fromEntries(
+        ["scene", "stage", "body", "auto"].map((id) => [
+          id,
+          { ...canonicalNodes[id] },
+        ])
+      );
+    });
+    fake.replaceNode.mockImplementation((bytes) => {
+      const node = JSON.parse(new TextDecoder().decode(bytes)) as {
+        id: string;
+      };
+      if (!Object.prototype.hasOwnProperty.call(activeNodes, node.id)) {
+        return false;
+      }
+      activeNodes[node.id] = node;
+      return true;
+    });
+    const afterPaint = vi.fn<() => Promise<void>>(async () => {});
+    const runtime = await createLiveSceneRuntime({
+      canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
+      archive: { document: new Uint8Array([1]), images: {} },
+      snapshot,
+      sceneId: "scene",
+      expectedSchemaVersion: "test-schema",
+      createSurface: async () => fake,
+      encodeNode: (node) => new TextEncoder().encode(JSON.stringify(node)),
+      afterPaint,
+    });
+
+    await runtime.applyPatch({
+      text: {
+        body: "Prior body",
+        auto: "Prior auto",
+      },
+    });
+    const redrawsBeforeCue = fake.redraw.mock.calls.length;
+    const paintsBeforeCue = afterPaint.mock.calls.length;
+    const replacementsBeforeCue = fake.replaceNode.mock.calls.length;
+
+    await runtime.activateScene("scene", {
+      text: { body: "Requested body" },
+    });
+
+    expect(fake.switchScene.mock.calls).toEqual([["scene"]]);
+    expect(activeNodes.body).toMatchObject({ text: "Requested body" });
+    expect(activeNodes.auto).toMatchObject({ text: "Auto authored" });
+    expect(fake.redraw).toHaveBeenCalledTimes(redrawsBeforeCue + 1);
+    expect(afterPaint).toHaveBeenCalledTimes(paintsBeforeCue + 1);
+    const cueReplacementOrders =
+      fake.replaceNode.mock.invocationCallOrder.slice(replacementsBeforeCue);
+    const cueRedrawOrder = fake.redraw.mock.invocationCallOrder.at(-1)!;
+    const cuePaintOrder = afterPaint.mock.invocationCallOrder.at(-1)!;
+    expect(cueReplacementOrders).toHaveLength(2);
+    expect(cueReplacementOrders.every((order) => order < cueRedrawOrder)).toBe(
+      true
+    );
+    expect(cueRedrawOrder).toBeLessThan(cuePaintOrder);
+  });
+
+  it("restores the prior same-scene projection when presentation fails", async () => {
+    const fake = surface();
+    const canonicalNodes = snapshot.document.nodes as Record<
+      string,
+      Record<string, unknown>
+    >;
+    let activeNodes: Record<string, Record<string, unknown>> = {};
+    fake.switchScene.mockImplementation(() => {
+      activeNodes = Object.fromEntries(
+        ["scene", "stage", "body", "auto"].map((id) => [
+          id,
+          { ...canonicalNodes[id] },
+        ])
+      );
+    });
+    fake.replaceNode.mockImplementation((bytes) => {
+      const node = JSON.parse(new TextDecoder().decode(bytes)) as {
+        id: string;
+      };
+      if (!Object.prototype.hasOwnProperty.call(activeNodes, node.id)) {
+        return false;
+      }
+      activeNodes[node.id] = node;
+      return true;
+    });
+    let failPresentation = false;
+    const afterPaint = vi.fn<() => Promise<void>>(async () => {
+      if (!failPresentation) return;
+      failPresentation = false;
+      throw new Error("presentation failed");
+    });
+    const runtime = await createLiveSceneRuntime({
+      canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
+      archive: { document: new Uint8Array([1]), images: {} },
+      snapshot,
+      sceneId: "scene",
+      expectedSchemaVersion: "test-schema",
+      createSurface: async () => fake,
+      encodeNode: (node) => new TextEncoder().encode(JSON.stringify(node)),
+      afterPaint,
+    });
+    await runtime.applyPatch({
+      text: {
+        body: "Prior body",
+        auto: "Prior auto",
+      },
+    });
+
+    failPresentation = true;
+    await expect(
+      runtime.activateScene("scene", {
+        text: { body: "Rejected body" },
+      })
+    ).rejects.toThrow("presentation failed");
+
+    expect(fake.switchScene.mock.calls).toEqual([["scene"]]);
+    expect(activeNodes.body).toMatchObject({ text: "Prior body" });
+    expect(activeNodes.auto).toMatchObject({ text: "Prior auto" });
+    await runtime.applyPatch({ text: { body: "Recovered body" } });
+    expect(activeNodes.body).toMatchObject({ text: "Recovered body" });
+    expect(fake.dispose).not.toHaveBeenCalled();
+  });
+
+  it("poisons the runtime when a failed same-scene presentation cannot restore its prior projection", async () => {
+    const fake = surface();
+    const canonicalNodes = snapshot.document.nodes as Record<
+      string,
+      Record<string, unknown>
+    >;
+    let activeNodes: Record<string, Record<string, unknown>> = {};
+    fake.switchScene.mockImplementation(() => {
+      activeNodes = Object.fromEntries(
+        ["scene", "stage", "body", "auto"].map((id) => [
+          id,
+          { ...canonicalNodes[id] },
+        ])
+      );
+    });
+    fake.replaceNode.mockImplementation((bytes) => {
+      const node = JSON.parse(new TextDecoder().decode(bytes)) as {
+        id: string;
+      };
+      if (!Object.prototype.hasOwnProperty.call(activeNodes, node.id)) {
+        return false;
+      }
+      activeNodes[node.id] = node;
+      return true;
+    });
+    let presentationFailures = 0;
+    const afterPaint = vi.fn<() => Promise<void>>(async () => {
+      if (presentationFailures === 0) return;
+      presentationFailures -= 1;
+      throw new Error("presentation failed");
+    });
+    const runtime = await createLiveSceneRuntime({
+      canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
+      archive: { document: new Uint8Array([1]), images: {} },
+      snapshot,
+      sceneId: "scene",
+      expectedSchemaVersion: "test-schema",
+      createSurface: async () => fake,
+      encodeNode: (node) => new TextEncoder().encode(JSON.stringify(node)),
+      afterPaint,
+    });
+    await runtime.applyPatch({ text: { body: "Prior body" } });
+
+    presentationFailures = 2;
+    await expect(
+      runtime.activateScene("scene", {
+        text: { body: "Rejected body" },
+      })
+    ).rejects.toMatchObject({ code: "activation-rollback-failed" });
+
+    expect(fake.switchScene.mock.calls).toEqual([["scene"]]);
+    expect(fake.dispose).toHaveBeenCalledTimes(1);
+    await expect(runtime.activateScene("scene")).rejects.toMatchObject({
+      code: "runtime-disposed",
+    });
+  });
+
   it("atomically activates A-B-A from canonical nodes on one loaded surface", async () => {
     const fake = surface();
     fake.loadedSceneIds.mockReturnValue(["sceneA", "sceneB"]);
