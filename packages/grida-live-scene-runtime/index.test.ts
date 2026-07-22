@@ -1627,4 +1627,113 @@ describe("live scene runtime", () => {
     );
     expect(raster.exportNodeAs).toHaveBeenCalledTimes(1);
   });
+
+  it("projects EVERY scene root when external media owns the presentation", async () => {
+    const fake = surface();
+    const schemaVersion = grida.program.document.SCHEMA_VERSION;
+    const sceneNode = (id: string) => ({
+      id,
+      type: "scene",
+      name: id,
+      active: true,
+      locked: false,
+      guides: [],
+      edges: [],
+      constraints: { children: "multiple" },
+      background_color: { r: 0, g: 0, b: 0, a: 1 },
+    });
+    const stageNode = (id: string) => ({
+      id,
+      type: "container",
+      name: id,
+      active: true,
+      locked: false,
+      clips_content: true,
+      opacity: 1,
+      z_index: 0,
+      rotation: 0,
+      layout_positioning: "absolute",
+      layout_inset_left: 0,
+      layout_inset_top: 0,
+      layout_target_width: 1920,
+      layout_target_height: 1080,
+      layout_mode: "flow",
+      layout_direction: "horizontal",
+      layout_main_axis_alignment: "start",
+      layout_cross_axis_alignment: "start",
+      layout_main_axis_gap: 0,
+      layout_cross_axis_gap: 0,
+      layout_padding_top: 0,
+      layout_padding_right: 0,
+      layout_padding_bottom: 0,
+      layout_padding_left: 0,
+      stroke_width: 0,
+      stroke_cap: "butt",
+      stroke_join: "miter",
+      fill: {
+        type: "solid",
+        color: { r: 0, g: 0, b: 0, a: 1 },
+        active: true,
+      },
+      fill_paints: [
+        {
+          type: "solid",
+          color: { r: 0, g: 0, b: 0, a: 1 },
+          active: true,
+        },
+      ],
+    });
+    const source = {
+      version: schemaVersion,
+      document: {
+        nodes: {
+          scene: sceneNode("scene"),
+          stage: stageNode("stage"),
+          "scene-b": sceneNode("scene-b"),
+          "stage-b": stageNode("stage-b"),
+        },
+        links: {
+          scene: ["stage"],
+          stage: [],
+          "scene-b": ["stage-b"],
+          "stage-b": [],
+        },
+        scenes_ref: ["scene", "scene-b"],
+        entry_scene_id: "scene",
+        images: {},
+        bitmaps: {},
+        properties: {},
+        external_assets: {},
+        animations: {},
+        minimum_reader_version: schemaVersion,
+      },
+    };
+    const authoredDocument = io.GRID.encode(
+      source.document as never,
+      schemaVersion
+    );
+    await createLiveSceneRuntime({
+      canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
+      archive: { document: authoredDocument, images: {} },
+      snapshot: source,
+      sceneId: "scene",
+      expectedSchemaVersion: schemaVersion,
+      transparentSceneBackground: true,
+      createSurface: async () => fake,
+      afterPaint: async () => {},
+    });
+
+    const loadedDocument = io.GRID.decode(
+      fake.loadSceneGrida.mock.calls[0]![0]
+    ) as unknown as typeof source.document;
+    // The presentation runtime is media-owned as a whole: activating ANY
+    // scene (a slide advance) must reveal the external media, so every
+    // scene root and its stage fill project transparent up front.
+    expect(loadedDocument.nodes["scene-b"]).not.toHaveProperty(
+      "background_color"
+    );
+    expect(loadedDocument.nodes["stage-b"]).not.toHaveProperty("fill");
+    expect(loadedDocument.nodes["stage-b"]).not.toHaveProperty("fill_paints");
+    expect(loadedDocument.nodes.scene).not.toHaveProperty("background_color");
+  });
 });

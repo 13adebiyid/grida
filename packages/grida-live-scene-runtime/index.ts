@@ -1,9 +1,9 @@
 import init, { createCanvas } from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.5.6";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.5.7";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
-  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|fitted-text-style-patch|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation|same-scene-canonical-reprojection|presentation-archive-background-projection";
+  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|fitted-text-style-patch|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation|same-scene-canonical-reprojection|presentation-archive-background-projection-all";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -760,19 +760,27 @@ export function projectLiveSceneArchiveBackground(
     if (!isRecord(scene) || scene.type !== "scene") {
       throw new Error(`The GRID document has no scene ${sceneId}.`);
     }
-    const projectedScene = { ...scene };
-    delete projectedScene.background_color;
-    const projectedNodes = { ...document.nodes, [sceneId]: projectedScene };
+    // The presentation runtime is media-owned as a whole: activating ANY
+    // scene (a slide advance) must reveal the external media below, so
+    // every scene root and its direct stage-container fill project
+    // transparent up front — not only the boot scene.
+    const projectedNodes = { ...document.nodes };
     const links = isRecord(document.links) ? document.links : {};
-    const stageIds = Array.isArray(links[sceneId]) ? links[sceneId] : [];
-    for (const stageId of stageIds) {
-      if (typeof stageId !== "string") continue;
-      const stage = projectedNodes[stageId];
-      if (!isRecord(stage) || stage.type !== "container") continue;
-      const projectedStage = { ...stage };
-      delete projectedStage.fill;
-      delete projectedStage.fill_paints;
-      projectedNodes[stageId] = projectedStage;
+    for (const [nodeId, node] of Object.entries(document.nodes)) {
+      if (!isRecord(node) || node.type !== "scene") continue;
+      const projectedScene = { ...node };
+      delete projectedScene.background_color;
+      projectedNodes[nodeId] = projectedScene;
+      const stageIds = Array.isArray(links[nodeId]) ? links[nodeId] : [];
+      for (const stageId of stageIds) {
+        if (typeof stageId !== "string") continue;
+        const stage = projectedNodes[stageId];
+        if (!isRecord(stage) || stage.type !== "container") continue;
+        const projectedStage = { ...stage };
+        delete projectedStage.fill;
+        delete projectedStage.fill_paints;
+        projectedNodes[stageId] = projectedStage;
+      }
     }
     const projectedDocument = {
       ...document,
