@@ -1789,3 +1789,96 @@ describe("live scene runtime", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Presentation-frame camera authority (Rhema live-run regression 2026-07-22):
+// the audience camera framed the scene CONTENT union ("<scene>") while the
+// editor and thumbnail export framed the authored stage container — an
+// auto-grown text node dragged the live zoom until text touched the screen
+// edge. One authority now (scenePresentationFrameNodeId); these tests pin
+// that the camera consumes it, including across a cross-scene activation.
+// ---------------------------------------------------------------------------
+describe("presentation-frame camera authority", () => {
+  it("frames the stage container, never the scene content union", async () => {
+    const fake = surface();
+    fake.getNodeAbsoluteBoundingBox.mockImplementation((target: string) =>
+      target === "stage"
+        ? { x: 0, y: 0, width: 1920, height: 1080 }
+        : // Inflated content union — what an auto-grown text node produces.
+          { x: -200, y: -100, width: 2400, height: 1400 }
+    );
+    const runtime = await createLiveSceneRuntime({
+      canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
+      archive: { document: new Uint8Array([1]), images: {} },
+      snapshot,
+      sceneId: "scene",
+      expectedSchemaVersion: "test-schema",
+      createSurface: async () => fake,
+      afterPaint: async () => {},
+    });
+    expect(fake.getNodeAbsoluteBoundingBox).toHaveBeenCalledWith("stage");
+    expect(fake.getNodeAbsoluteBoundingBox).not.toHaveBeenCalledWith(
+      "<scene>"
+    );
+    // dpr=1, container == canvas → identity scale centered on the frame. If
+    // the camera had used the inflated union, scale would be 1920/2400=0.8.
+    const transform = fake.setMainCameraTransform.mock.calls.at(-1)?.[0];
+    expect(transform).toEqual([
+      [1, 0, 960],
+      [0, 1, 540],
+    ]);
+    runtime.dispose();
+  });
+
+  it("falls back to the scene union only when the frame node has no finite rect", async () => {
+    const fake = surface();
+    fake.getNodeAbsoluteBoundingBox.mockImplementation((target: string) =>
+      target === "<scene>" ? { x: 0, y: 0, width: 1920, height: 1080 } : null
+    );
+    const runtime = await createLiveSceneRuntime({
+      canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
+      archive: { document: new Uint8Array([1]), images: {} },
+      snapshot,
+      sceneId: "scene",
+      expectedSchemaVersion: "test-schema",
+      createSurface: async () => fake,
+      afterPaint: async () => {},
+    });
+    expect(fake.getNodeAbsoluteBoundingBox).toHaveBeenCalledWith("stage");
+    expect(fake.getNodeAbsoluteBoundingBox).toHaveBeenCalledWith("<scene>");
+    const transform = fake.setMainCameraTransform.mock.calls.at(-1)?.[0];
+    expect(transform).toEqual([
+      [1, 0, 960],
+      [0, 1, 540],
+    ]);
+    runtime.dispose();
+  });
+
+  it("re-frames the TARGET scene's container across a cross-scene activation", async () => {
+    const fake = surface();
+    fake.loadedSceneIds.mockReturnValue(["sceneA", "sceneB"]);
+    fake.getNodeAbsoluteBoundingBox.mockImplementation((target: string) =>
+      target === "stageA" || target === "stageB"
+        ? { x: 0, y: 0, width: 1920, height: 1080 }
+        : { x: -300, y: -200, width: 2600, height: 1500 }
+    );
+    const runtime = await createLiveSceneRuntime({
+      canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
+      archive: { document: new Uint8Array([1]), images: {} },
+      snapshot: multiSceneSnapshot,
+      sceneId: "sceneA",
+      expectedSchemaVersion: "test-schema",
+      createSurface: async () => fake,
+      encodeNode: (node) => new TextEncoder().encode(JSON.stringify(node)),
+      fallbackFonts: ["Inter"],
+      afterPaint: async () => {},
+    });
+    expect(fake.getNodeAbsoluteBoundingBox).toHaveBeenCalledWith("stageA");
+    await runtime.activateScene("sceneB");
+    expect(fake.getNodeAbsoluteBoundingBox).toHaveBeenCalledWith("stageB");
+    expect(fake.getNodeAbsoluteBoundingBox).not.toHaveBeenCalledWith(
+      "<scene>"
+    );
+    runtime.dispose();
+  });
+});

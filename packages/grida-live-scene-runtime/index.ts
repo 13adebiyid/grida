@@ -1,9 +1,9 @@
 import init, { createCanvas } from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.5.8";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.6.0";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
-  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|fitted-text-style-patch|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation|same-scene-canonical-reprojection|presentation-archive-background-projection-all";
+  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|fitted-text-style-patch|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation|same-scene-canonical-reprojection|presentation-archive-background-projection-all|presentation-frame-camera";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -445,7 +445,23 @@ function collectLiveSceneImageResources(
   return [...resources].sort();
 }
 
-function sceneExportNodeId(
+/** THE presentation-frame authority (Rhema live-run regression 2026-07-22).
+ *
+ * Every consumer that answers "which rectangle IS the presentation?" must
+ * call this one function: thumbnail export AND the live camera (fitCamera).
+ * It returns the scene's stage container node — the authored frame, margins
+ * included — falling back to the scene itself only when no container exists.
+ *
+ * History: thumbnail export always framed the container, but fitCamera
+ * framed the UNION BOUNDS of the scene's content ("<scene>"). Any child
+ * whose bounds exceeded the authored frame (an auto-grown/unfitted text
+ * node, an effect layer) zoomed the audience camera so CONTENT touched the
+ * viewport edge — text at the screen edge, slightly clipped, while the
+ * editor and every operator preview (anchored to the container) showed the
+ * authored margins. Two surfaces, two framing bases: the enumerated-
+ * invariant class the Rhema enterprise-architecture skill bans. One owner
+ * now; both consumers call it. */
+function scenePresentationFrameNodeId(
   snapshot: LiveSceneSnapshot,
   sceneId: string
 ): string {
@@ -636,7 +652,7 @@ export class LiveSceneThumbnailRenderer {
       }
     }
     const result = this.surface.exportNodeAs(
-      sceneExportNodeId(snapshot, options.sceneId),
+      scenePresentationFrameNodeId(snapshot, options.sceneId),
       {
         format: "PNG",
         constraints: {
@@ -859,9 +875,19 @@ function resourceIdForArchiveImage(filename: string): string {
 function fitCamera(
   surface: LiveSceneSurface,
   canvas: HTMLCanvasElement,
-  dpr: number
+  dpr: number,
+  frameTarget: string = "<scene>"
 ): void {
-  const bounds = surface.getNodeAbsoluteBoundingBox("<scene>");
+  // The camera frames the presentation-frame node (the authored stage
+  // container — see scenePresentationFrameNodeId), NOT the union bounds of
+  // the scene's content: content that outgrows the authored frame must crop
+  // at the frame edge exactly as the editor viewport shows it, never re-zoom
+  // the audience camera. "<scene>" union bounds remain only as the fallback
+  // when the target node yields no finite rect (container-less scenes).
+  const bounds =
+    (frameTarget !== "<scene>"
+      ? surface.getNodeAbsoluteBoundingBox(frameTarget)
+      : null) ?? surface.getNodeAbsoluteBoundingBox("<scene>");
   if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
     throw new LiveSceneRuntimeError(
       "invalid-scene-bounds",
@@ -1188,12 +1214,18 @@ class LiveSceneRuntime {
     };
   }
 
+  /** The camera's framing basis for the ACTIVE scene — always the one
+   *  presentation-frame authority, never re-derived per call site. */
+  private presentationFrameTarget(): string {
+    return scenePresentationFrameNodeId(this.snapshot, this.activeSceneId);
+  }
+
   resize(width: number, height: number, dpr = this.dpr): void {
     if (this.disposed) return;
     this.canvas.width = Math.max(1, Math.round(width * dpr));
     this.canvas.height = Math.max(1, Math.round(height * dpr));
     this.surface.resize(this.canvas.width, this.canvas.height);
-    fitCamera(this.surface, this.canvas, dpr);
+    fitCamera(this.surface, this.canvas, dpr, this.presentationFrameTarget());
     this.surface.redraw();
   }
 
@@ -1223,14 +1255,14 @@ class LiveSceneRuntime {
         try {
           this.commitNodeChanges(changes, false);
           committed = true;
-          fitCamera(this.surface, this.canvas, this.dpr);
+          fitCamera(this.surface, this.canvas, this.dpr, this.presentationFrameTarget());
           this.surface.redraw();
           await this.afterPaint();
         } catch (error) {
           if (!committed) throw error;
           try {
             this.rollbackNodeChanges(changes);
-            fitCamera(this.surface, this.canvas, this.dpr);
+            fitCamera(this.surface, this.canvas, this.dpr, this.presentationFrameTarget());
             this.surface.redraw();
             await this.afterPaint();
           } catch (rollbackCause) {
@@ -1266,7 +1298,7 @@ class LiveSceneRuntime {
         this.commitNodeChanges(changes, false);
         this.activeSceneId = sceneId;
         this.activeNodeIds = targetNodeIds;
-        fitCamera(this.surface, this.canvas, this.dpr);
+        fitCamera(this.surface, this.canvas, this.dpr, this.presentationFrameTarget());
         this.surface.redraw();
         await this.afterPaint();
       } catch (error) {
@@ -1275,7 +1307,7 @@ class LiveSceneRuntime {
           this.commitNodeChanges(previousOverrides, false);
           this.activeSceneId = previousSceneId;
           this.activeNodeIds = previousNodeIds;
-          fitCamera(this.surface, this.canvas, this.dpr);
+          fitCamera(this.surface, this.canvas, this.dpr, this.presentationFrameTarget());
           this.surface.redraw();
         } catch (rollbackCause) {
           this.poison();
@@ -1484,7 +1516,12 @@ export async function createLiveSceneRuntime(
     surface.switchScene(options.sceneId);
     surface.runtime_renderer_set_isolation_stage_preset?.(0);
     surface.resize(options.canvas.width, options.canvas.height);
-    fitCamera(surface, options.canvas, dpr);
+    fitCamera(
+      surface,
+      options.canvas,
+      dpr,
+      scenePresentationFrameNodeId(snapshot, options.sceneId)
+    );
     surface.redraw();
     const afterPaint = options.afterPaint ?? defaultAfterPaint;
     await awaitAbortable(() => afterPaint(options.signal), options.signal);
