@@ -1173,8 +1173,13 @@ export namespace format {
          */
         function encodeTextStyleRec(
           builder: Builder,
-          style: grida.program.nodes.i.ITextStyle
+          style: grida.program.nodes.i.ITextStyle | undefined
         ): flatbuffers.Offset {
+          // A decoded attributed node may omit its optional style records
+          // (absent tables in the authored flatbuffer). Every field read
+          // below is undefined-tolerant, so an absent style encodes engine
+          // defaults — it must never crash a live-presentation projection.
+          style = style ?? ({} as grida.program.nodes.i.ITextStyle);
           // TextDecorationRec
           fbs.TextDecorationRec.startTextDecorationRec(builder);
           fbs.TextDecorationRec.addTextDecorationLine(
@@ -1369,7 +1374,7 @@ export namespace format {
           const c2b =
             node.text != null ? charToByteOffsets(node.text) : undefined;
           const runOffsets: flatbuffers.Offset[] = [];
-          for (const run of node.styled_runs) {
+          for (const run of node.styled_runs ?? []) {
             const runStyleOffset = encodeTextStyleRec(builder, run.style);
 
             // Per-run fill paints

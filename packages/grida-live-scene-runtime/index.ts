@@ -1,7 +1,7 @@
 import init, { createCanvas } from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.5.7";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.5.8";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
   "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|fitted-text-style-patch|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation|same-scene-canonical-reprojection|presentation-archive-background-projection-all";
 

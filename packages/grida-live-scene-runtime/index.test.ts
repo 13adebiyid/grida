@@ -15,6 +15,7 @@ vi.mock("@grida/canvas-wasm", () => ({
 import {
   createLiveSceneRuntime,
   createLiveSceneThumbnailRenderer,
+  projectLiveSceneArchiveBackground,
   scanLiveSceneCapabilities,
 } from "./index";
 
@@ -1735,5 +1736,56 @@ describe("live scene runtime", () => {
     expect(loadedDocument.nodes["stage-b"]).not.toHaveProperty("fill");
     expect(loadedDocument.nodes["stage-b"]).not.toHaveProperty("fill_paints");
     expect(loadedDocument.nodes.scene).not.toHaveProperty("background_color");
+  });
+
+  it("projects archives whose attributed text omits optional style records", async () => {
+    const schemaVersion = grida.program.document.SCHEMA_VERSION;
+    const source = {
+      nodes: {
+        scene: {
+          id: "scene",
+          type: "scene",
+          name: "Scene",
+          active: true,
+          locked: false,
+          guides: [],
+          edges: [],
+          constraints: { children: "multiple" },
+          background_color: { r: 0, g: 0, b: 0, a: 1 },
+        },
+        verse: {
+          id: "verse",
+          type: "text",
+          name: "Verse",
+          active: true,
+          locked: false,
+          text: "For God so loved the world",
+          // No default_style and no styled_runs: exactly what a decoded
+          // authored archive can yield when the writer omitted the optional
+          // style tables. The projection re-encode must survive it.
+        },
+      },
+      links: { scene: ["verse"], verse: [] },
+      scenes_ref: ["scene"],
+      entry_scene_id: "scene",
+      images: {},
+      bitmaps: {},
+      properties: {},
+      external_assets: {},
+      animations: {},
+      minimum_reader_version: schemaVersion,
+    };
+    const authored = io.GRID.encode(source as never, schemaVersion);
+    const projected = projectLiveSceneArchiveBackground(
+      authored,
+      "scene",
+      true,
+      schemaVersion
+    );
+    const decoded = io.GRID.decode(projected) as unknown as typeof source;
+    expect(decoded.nodes.scene).not.toHaveProperty("background_color");
+    expect((decoded.nodes.verse as { text?: unknown }).text).toContain(
+      "For God"
+    );
   });
 });
