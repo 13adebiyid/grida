@@ -1,9 +1,9 @@
 import init, { createCanvas } from "@grida/canvas-wasm";
 import { io } from "@grida/io";
 
-export const LIVE_SCENE_RUNTIME_VERSION = "1.6.0";
+export const LIVE_SCENE_RUNTIME_VERSION = "1.6.1";
 export const LIVE_SCENE_RUNTIME_CONTRACT =
-  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|fitted-text-style-patch|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation|same-scene-canonical-reprojection|presentation-archive-background-projection-all|presentation-frame-camera";
+  "live-scene-runtime-v1|archive-grid|scene-identity|document-image-introspection|document-font-introspection|shared-font-fallback|attributed-text-style-rebase|fitted-text-style-patch|selected-scene-atomic-patch|atomic-scene-activation|verified-patch-rollback|engine-owned-text-layout|persistent-surface|cancellable-boot|deferred-webgl-context-release|per-surface-webgl-context-ownership|shared-raster-thumbnails|projected-raster-thumbnails|document-driven-video|dom-gated-animation|same-scene-canonical-reprojection|presentation-archive-background-projection-all|presentation-frame-camera";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -853,6 +853,25 @@ function ownLiveSceneSurface(
   };
 }
 
+function bindLiveSceneSurfaceContext(
+  surface: LiveSceneSurface,
+  registry: EmscriptenGLContextRegistry,
+  handle: number
+): LiveSceneSurface {
+  return new Proxy(surface, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        if (registry.currentContext?.handle !== handle) {
+          registry.makeContextCurrent(handle);
+        }
+        return Reflect.apply(value, target, args);
+      };
+    },
+  });
+}
+
 function releaseWebGLContextAfterStop(
   registry: EmscriptenGLContextRegistry,
   handle: number
@@ -1255,14 +1274,24 @@ class LiveSceneRuntime {
         try {
           this.commitNodeChanges(changes, false);
           committed = true;
-          fitCamera(this.surface, this.canvas, this.dpr, this.presentationFrameTarget());
+          fitCamera(
+            this.surface,
+            this.canvas,
+            this.dpr,
+            this.presentationFrameTarget()
+          );
           this.surface.redraw();
           await this.afterPaint();
         } catch (error) {
           if (!committed) throw error;
           try {
             this.rollbackNodeChanges(changes);
-            fitCamera(this.surface, this.canvas, this.dpr, this.presentationFrameTarget());
+            fitCamera(
+              this.surface,
+              this.canvas,
+              this.dpr,
+              this.presentationFrameTarget()
+            );
             this.surface.redraw();
             await this.afterPaint();
           } catch (rollbackCause) {
@@ -1298,7 +1327,12 @@ class LiveSceneRuntime {
         this.commitNodeChanges(changes, false);
         this.activeSceneId = sceneId;
         this.activeNodeIds = targetNodeIds;
-        fitCamera(this.surface, this.canvas, this.dpr, this.presentationFrameTarget());
+        fitCamera(
+          this.surface,
+          this.canvas,
+          this.dpr,
+          this.presentationFrameTarget()
+        );
         this.surface.redraw();
         await this.afterPaint();
       } catch (error) {
@@ -1307,7 +1341,12 @@ class LiveSceneRuntime {
           this.commitNodeChanges(previousOverrides, false);
           this.activeSceneId = previousSceneId;
           this.activeNodeIds = previousNodeIds;
-          fitCamera(this.surface, this.canvas, this.dpr, this.presentationFrameTarget());
+          fitCamera(
+            this.surface,
+            this.canvas,
+            this.dpr,
+            this.presentationFrameTarget()
+          );
           this.surface.redraw();
         } catch (rollbackCause) {
           this.poison();
@@ -1410,7 +1449,13 @@ export async function createLiveSceneRuntime(
               const registry = factory.module.GL;
               const contextHandle = registry.currentContext?.handle;
               return ownLiveSceneSurface(
-                surface,
+                typeof contextHandle === "number" && contextHandle > 0
+                  ? bindLiveSceneSurfaceContext(
+                      surface,
+                      registry,
+                      contextHandle
+                    )
+                  : surface,
                 typeof contextHandle === "number" && contextHandle > 0
                   ? () => releaseWebGLContextAfterStop(registry, contextHandle)
                   : undefined
