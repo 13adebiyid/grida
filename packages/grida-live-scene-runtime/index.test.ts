@@ -527,11 +527,13 @@ describe("live scene runtime", () => {
       ...options,
       canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
     });
+    const firstRedrawCount = first.redraw.mock.calls.length;
     const secondRuntime = await createLiveSceneRuntime({
       ...options,
       canvas: { width: 1280, height: 720 } as HTMLCanvasElement,
     });
 
+    expect(first.redraw).toHaveBeenCalledTimes(firstRedrawCount + 1);
     expect(() => firstRuntime.resize(960, 540)).not.toThrow();
     expect(() => secondRuntime.resize(640, 360)).not.toThrow();
     expect(gl.makeContextCurrent.mock.calls.slice(-2)).toEqual([[41], [42]]);

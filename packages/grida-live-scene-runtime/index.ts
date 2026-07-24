@@ -51,6 +51,7 @@ export interface LiveSceneSurface {
 
 interface OwnedLiveSceneSurface {
   surface: LiveSceneSurface;
+  repaintPeers?(): void;
   dispose(): void;
 }
 
@@ -59,6 +60,11 @@ interface EmscriptenGLContextRegistry {
   makeContextCurrent(handle: number): void;
   deleteContext(handle: number): void;
 }
+
+const liveSceneSurfacesByRegistry = new WeakMap<
+  EmscriptenGLContextRegistry,
+  Set<LiveSceneSurface>
+>();
 
 export interface LiveSceneCapabilities {
   eligible: boolean;
@@ -829,11 +835,13 @@ function afterFinalAnimationFrame(callback: () => void): void {
 
 function ownLiveSceneSurface(
   surface: LiveSceneSurface,
-  afterDispose?: () => void
+  afterDispose?: () => void,
+  repaintPeers?: () => void
 ): OwnedLiveSceneSurface {
   let disposed = false;
   return {
     surface,
+    repaintPeers,
     dispose: () => {
       if (disposed) return;
       disposed = true;
@@ -870,6 +878,31 @@ function bindLiveSceneSurfaceContext(
       };
     },
   });
+}
+
+function registerLiveSceneSurface(
+  registry: EmscriptenGLContextRegistry,
+  surface: LiveSceneSurface
+): () => void {
+  const surfaces =
+    liveSceneSurfacesByRegistry.get(registry) ?? new Set<LiveSceneSurface>();
+  surfaces.add(surface);
+  liveSceneSurfacesByRegistry.set(registry, surfaces);
+  return () => {
+    surfaces.delete(surface);
+    if (surfaces.size === 0) {
+      liveSceneSurfacesByRegistry.delete(registry);
+    }
+  };
+}
+
+function repaintPeerLiveSceneSurfaces(
+  registry: EmscriptenGLContextRegistry,
+  surface: LiveSceneSurface
+): void {
+  for (const peer of liveSceneSurfacesByRegistry.get(registry) ?? []) {
+    if (peer !== surface) peer.redraw();
+  }
 }
 
 function releaseWebGLContextAfterStop(
@@ -1448,16 +1481,28 @@ export async function createLiveSceneRuntime(
               }) as LiveSceneSurface;
               const registry = factory.module.GL;
               const contextHandle = registry.currentContext?.handle;
-              return ownLiveSceneSurface(
+              const boundSurface =
                 typeof contextHandle === "number" && contextHandle > 0
                   ? bindLiveSceneSurfaceContext(
                       surface,
                       registry,
                       contextHandle
                     )
-                  : surface,
+                  : surface;
+              const unregister =
+                boundSurface === surface
+                  ? undefined
+                  : registerLiveSceneSurface(registry, boundSurface);
+              return ownLiveSceneSurface(
+                boundSurface,
                 typeof contextHandle === "number" && contextHandle > 0
-                  ? () => releaseWebGLContextAfterStop(registry, contextHandle)
+                  ? () => {
+                      unregister?.();
+                      releaseWebGLContextAfterStop(registry, contextHandle);
+                    }
+                  : undefined,
+                unregister
+                  ? () => repaintPeerLiveSceneSurfaces(registry, boundSurface)
                   : undefined
               );
             })(),
@@ -1610,6 +1655,7 @@ export async function createLiveSceneRuntime(
     surface.redraw();
     await awaitAbortable(() => afterPaint(options.signal), options.signal);
     throwIfAborted(options.signal);
+    acquiredSurface.repaintPeers?.();
     stats.firstFrameMs = Math.max(0, performance.now() - startedAt);
     const runtime = new LiveSceneRuntime(
       surface,
