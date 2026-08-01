@@ -240,11 +240,27 @@ const nextConfig: NextConfig = {
       // #endregion
     },
   },
-  // No `webpack:` block — `next build` defaults to Turbopack in Next 16.
-  // `next build --webpack` does not work on this codebase: @grida/canvas-wasm
-  // imports `node:fs`/`node:crypto`, which webpack rejects with
-  // UnhandledSchemeError. Turbopack stubs Node builtins on the browser target
-  // automatically, so no fs/path fallback is needed here.
+  webpack(config, { webpack }) {
+    if (!STATIC_EXPORT) return config;
+
+    // Emscripten's universal wrapper retains dormant Node branches. Rewrite
+    // their node: scheme before Webpack's resource reader sees it, then mark
+    // the bare modules unavailable in the browser target.
+    config.plugins.push(
+      new webpack.NormalModuleReplacementPlugin(
+        /^node:(fs|crypto)$/,
+        (resource: { request: string }) => {
+          resource.request = resource.request.replace(/^node:/, "");
+        }
+      )
+    );
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      fs: false,
+      crypto: false,
+    };
+    return config;
+  },
 };
 
 const sentry_build_options: SentryBuildOptions | null = USE_TELEMETRY
