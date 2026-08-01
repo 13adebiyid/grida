@@ -478,6 +478,23 @@ function WasmTextEditorRelay({ node_id }: { node_id: string }) {
         requestAnimationFrame(() => textareaRef.current?.focus());
         return;
       }
+      // The surface context menu owns Paste and match style while this WASM
+      // text-edit session owns the caret and destination typography. Keep the
+      // session alive while Radix focuses its menu, then restore the hidden
+      // input after the menu closes. (See
+      // test/canvas-clipboard-paste-match-text-style.md.)
+      if (related?.closest('[role="menu"]')) {
+        const restoreAfterMenu = () => {
+          if (!activeRef.current) return;
+          if (document.querySelector('[role="menu"]')) {
+            requestAnimationFrame(restoreAfterMenu);
+            return;
+          }
+          textareaRef.current?.focus();
+        };
+        requestAnimationFrame(restoreAfterMenu);
+        return;
+      }
       editor.surface.surfaceTryExitContentEditMode();
     },
     [editor]
