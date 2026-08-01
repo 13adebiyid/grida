@@ -54,6 +54,7 @@ function ContextMenuContent() {
     <_ContextMenuContent className="w-52">
       <ActionItem action={actions.copy} />
       <ActionItem action={actions.paste} />
+      <ActionItem action={actions.pasteAndMatchTextStyle} />
       <ContextMenuSeparator />
       <ActionItem action={actions.copyLayerStyle} />
       <ActionItem action={actions.pasteLayerStyle} />

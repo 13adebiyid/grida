@@ -7,6 +7,13 @@ import grida from "@grida/schema";
 import assert from "assert";
 import { toast } from "sonner";
 import { keyboardShortcutText } from "@/grida-canvas-hosted/playground/uxhost-shortcut-renderer";
+import {
+  parseVisualLayerStyle,
+  readVisualLayerStyle,
+  VISUAL_LAYER_STYLE_CLIPBOARD_KEY,
+  type VisualLayerStyle,
+} from "./style-clipboard";
+import { pasteTextMatchingDestinationStyle } from "./paste-match-style";
 
 export interface ContextMenuAction {
   label: string;
@@ -15,83 +22,96 @@ export interface ContextMenuAction {
   onSelect: () => void;
 }
 
-// ── Copy / Paste Layer Style (Bible Helper, Photoshop-like) ─────────────────
-// A text node's typography + fills, copied into a same-origin localStorage
-// "clipboard" so a style copied in ONE slide/document can be pasted onto a text
-// layer in ANOTHER (each slide opens a fresh editor iframe, but localStorage is
-// shared across them on the same origin). font_family is intentionally omitted
-// from v1 — it routes through an async font-load/validation path, not a plain
-// setter, so applying it blind risks silent failure.
-const LAYER_STYLE_CLIPBOARD_KEY = "bh-layer-style-clipboard.v1";
-// NOTE: the node schema stores fills under `fill_paints` (see
-// node.reducer.ts defineNodeProperty<"fill_paints">) — reading `fills`
-// here silently copied NOTHING for the most visible property (the color),
-// which made the whole feature read as broken (2026-07-07 report).
-const LAYER_STYLE_KEYS = [
-  "fill_paints",
-  "font_size",
-  "font_weight",
-  "text_align",
-  "text_align_vertical",
-  "line_height",
-  "letter_spacing",
-  "word_spacing",
-] as const;
-
-function readLayerStyle(
-  node: Record<string, unknown>
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const k of LAYER_STYLE_KEYS) {
-    if (node[k] !== undefined) out[k] = node[k];
+function safeCall(
+  command: ((...args: unknown[]) => unknown) | undefined,
+  ...args: unknown[]
+): boolean {
+  try {
+    command?.(...args);
+    return Boolean(command);
+  } catch {
+    return false;
   }
-  return out;
 }
 
-// Apply a copied style to one node. Each property is set independently and
-// guarded — a non-text target (or an unsupported value) skips that property
-// instead of aborting the whole paste.
-function applyLayerStyle(
+function applyVisualLayerStyle(
   editor: ReturnType<typeof useCurrentEditor>,
   id: string,
-  style: Record<string, unknown>
+  style: VisualLayerStyle
 ): void {
-  const c = editor.commands as unknown as Record<
+  const commands = editor.commands as unknown as Record<
     string,
-    (...a: unknown[]) => void
+    (...args: unknown[]) => unknown
   >;
-  const set = (v: unknown) => ({ type: "set", value: v });
-  const tryCall = (
-    fn: ((...a: unknown[]) => void) | undefined,
-    ...args: unknown[]
-  ) => {
-    try {
-      fn?.(...args);
-    } catch {
-      /* property unsupported on this node — skip it */
-    }
-  };
-  if (style.fill_paints !== undefined)
-    tryCall(c.changeNodePropertyFills, id, style.fill_paints);
-  if (style.font_size !== undefined)
-    tryCall(c.changeTextNodeFontSize, id, set(style.font_size));
-  if (style.font_weight !== undefined)
-    tryCall(c.changeTextNodeFontWeight, id, style.font_weight);
-  if (style.text_align !== undefined)
-    tryCall(c.changeTextNodeTextAlign, id, style.text_align);
-  if (style.text_align_vertical !== undefined)
-    tryCall(c.changeTextNodeTextAlignVertical, id, style.text_align_vertical);
-  if (style.line_height !== undefined)
-    tryCall(c.changeTextNodeLineHeight, id, set(style.line_height));
-  if (style.letter_spacing !== undefined)
-    tryCall(c.changeTextNodeLetterSpacing, id, set(style.letter_spacing));
-  if (style.word_spacing !== undefined)
-    tryCall(c.changeTextNodeWordSpacing, id, set(style.word_spacing));
+  const set = (value: unknown) => ({ type: "set", value });
+  safeCall(commands.changeNodePropertyStrokes, id, style.stroke_paints ?? []);
+  safeCall(
+    commands.changeNodePropertyStrokeWidth,
+    id,
+    set(style.stroke_width ?? 0)
+  );
+  safeCall(
+    commands.changeNodePropertyStrokeAlign,
+    id,
+    style.stroke_align ?? undefined
+  );
+  safeCall(
+    commands.changeNodePropertyStrokeCap,
+    id,
+    style.stroke_cap ?? undefined
+  );
+  safeCall(
+    commands.changeNodePropertyStrokeJoin,
+    id,
+    style.stroke_join ?? undefined
+  );
+  safeCall(
+    commands.changeNodePropertyStrokeMiterLimit,
+    id,
+    style.stroke_miter_limit ?? undefined
+  );
+  safeCall(
+    commands.changeNodePropertyStrokeDashArray,
+    id,
+    style.stroke_dash_array ?? undefined
+  );
+  safeCall(
+    commands.changeNodePropertyStrokeDecorationStart,
+    id,
+    style.stroke_decoration_start ?? undefined
+  );
+  safeCall(
+    commands.changeNodePropertyStrokeDecorationEnd,
+    id,
+    style.stroke_decoration_end ?? undefined
+  );
+  safeCall(
+    commands.changeNodePropertyStrokeTopWidth,
+    id,
+    style.rectangular_stroke_width_top ?? undefined
+  );
+  safeCall(
+    commands.changeNodePropertyStrokeRightWidth,
+    id,
+    style.rectangular_stroke_width_right ?? undefined
+  );
+  safeCall(
+    commands.changeNodePropertyStrokeBottomWidth,
+    id,
+    style.rectangular_stroke_width_bottom ?? undefined
+  );
+  safeCall(
+    commands.changeNodePropertyStrokeLeftWidth,
+    id,
+    style.rectangular_stroke_width_left ?? undefined
+  );
+  safeCall(commands.changeNodeFeShadows, id, style.fe_shadows ?? undefined);
 }
 
 type ContextMenuActionType =
   | "copy"
   | "paste"
+  | "pasteAndMatchTextStyle"
   | "copyLayerStyle"
   | "pasteLayerStyle"
   | "copyAsSVG"
@@ -122,16 +142,17 @@ export function useContextMenuActions(ids: string[]): ContextMenuActions {
   const backend = useBackendState();
   const { onpaste_external_event } = useDataTransferEventTarget();
 
-  const nodes = useEditorState(editor, (s) => {
+  const { nodes, contentEditMode } = useEditorState(editor, (s) => {
     const map: Record<string, { type: grida.program.nodes.NodeType }> = {};
     ids.forEach((id) => {
       map[id] = { type: s.document.nodes[id].type };
     });
-    return map;
+    return { nodes: map, contentEditMode: s.content_edit_mode };
   });
 
   const hasSelection = ids.length > 0;
   const isSingle = ids.length === 1;
+  const isEditingText = contentEditMode?.type === "text";
   const canGroup = backend === "canvas" && hasSelection;
 
   const canFlatten =
@@ -175,6 +196,25 @@ export function useContextMenuActions(ids: string[]): ContextMenuActions {
         label: "Paste",
         onSelect: handlePaste,
       },
+      // See test/canvas-clipboard-paste-match-text-style.md.
+      pasteAndMatchTextStyle: {
+        label: "Paste and match style",
+        disabled: !isEditingText,
+        onSelect: () => {
+          void window.navigator.clipboard.readText().then(
+            (text) => {
+              const scene = editor.wasmScene;
+              if (scene && pasteTextMatchingDestinationStyle(scene, text)) {
+                toast.success("Pasted and matched text style");
+                return;
+              }
+              toast.error("Enter text editing before pasting");
+            },
+            () => toast.error("Couldn't read text from the clipboard")
+          );
+        },
+      },
+      // See test/canvas-clipboard-copy-paste-layer-style.md.
       copyLayerStyle: {
         label: "Copy layer style",
         disabled: !isSingle,
@@ -184,9 +224,9 @@ export function useContextMenuActions(ids: string[]): ContextMenuActions {
               ids[0] as string
             ] as unknown as Record<string, unknown> | undefined;
             if (!node) return;
-            const style = readLayerStyle(node);
+            const style = readVisualLayerStyle(node);
             window.localStorage.setItem(
-              LAYER_STYLE_CLIPBOARD_KEY,
+              VISUAL_LAYER_STYLE_CLIPBOARD_KEY,
               JSON.stringify(style)
             );
             toast.success("Copied layer style");
@@ -200,13 +240,19 @@ export function useContextMenuActions(ids: string[]): ContextMenuActions {
         disabled: !hasSelection,
         onSelect: () => {
           try {
-            const raw = window.localStorage.getItem(LAYER_STYLE_CLIPBOARD_KEY);
+            const raw = window.localStorage.getItem(
+              VISUAL_LAYER_STYLE_CLIPBOARD_KEY
+            );
             if (!raw) {
               toast.error("No layer style copied yet");
               return;
             }
-            const style = JSON.parse(raw) as Record<string, unknown>;
-            ids.forEach((id) => applyLayerStyle(editor, id, style));
+            const style = parseVisualLayerStyle(raw);
+            if (!style) {
+              toast.error("Copied layer style is invalid");
+              return;
+            }
+            ids.forEach((id) => applyVisualLayerStyle(editor, id, style));
             toast.success("Pasted layer style");
           } catch {
             toast.error("Couldn't paste layer style");
@@ -326,6 +372,7 @@ export function useContextMenuActions(ids: string[]): ContextMenuActions {
       editor,
       handlePaste,
       hasSelection,
+      isEditingText,
       canFlatten,
       targetSingleOrSelection,
       backend,
