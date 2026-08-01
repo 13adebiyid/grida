@@ -32,6 +32,67 @@ export interface BibleHelperSystemFontFamily {
   faces: BibleHelperSystemFontFace[];
 }
 
+export interface BibleHelperGoogleFontCss {
+  family: string;
+  css: string;
+}
+
+function variantKey(weight: number, italic: boolean): string {
+  if (weight === 400) return italic ? "italic" : "regular";
+  return italic ? `${weight}italic` : String(weight);
+}
+
+/** Convert the host's fixed-origin Google CSS response into the same registry
+ * shape as an installed family. Rhema requests one weight per URL with a
+ * generic UA, producing static TrueType faces instead of variable/subset
+ * WOFF2 faces that the WASM renderer can mis-index. */
+export function buildGoogleCssWebfontItems(
+  responses: unknown
+): GoogleWebFontListItem[] {
+  if (!Array.isArray(responses)) return [];
+  const out: GoogleWebFontListItem[] = [];
+  for (const raw of responses) {
+    if (!raw || typeof raw !== "object") continue;
+    const family = (raw as { family?: unknown }).family;
+    const css = (raw as { css?: unknown }).css;
+    if (typeof family !== "string" || !family.trim() || typeof css !== "string")
+      continue;
+    const files: Record<string, string> = {};
+    const variants: string[] = [];
+    for (const match of css.matchAll(/@font-face\s*\{([^}]*)\}/gi)) {
+      const body = match[1] ?? "";
+      const weightMatch = body.match(/font-weight\s*:\s*(\d{3})/i);
+      const styleMatch = body.match(/font-style\s*:\s*(italic|normal)/i);
+      const urlMatch = body.match(
+        /url\(\s*['"]?(https:\/\/fonts\.gstatic\.com\/[^'"\s)]+)['"]?\s*\)/i
+      );
+      if (!weightMatch || !urlMatch) continue;
+      const weight = Number(weightMatch[1]);
+      if (!Number.isFinite(weight)) continue;
+      const key = variantKey(
+        weight,
+        styleMatch?.[1]?.toLowerCase() === "italic"
+      );
+      if (!(key in files)) {
+        files[key] = urlMatch[1];
+        variants.push(key);
+      }
+    }
+    if (variants.length === 0) continue;
+    out.push({
+      category: LOCAL_FONT_CATEGORY,
+      family: family.trim(),
+      variants,
+      files,
+      subsets: ["latin"],
+      version: "rhema-google-static-v1",
+      lastModified: "",
+      menu: files.regular ?? files[variants[0]],
+    });
+  }
+  return out;
+}
+
 export function findPreferredMissingFamilyFallback(
   items: ReadonlyArray<GoogleWebFontListItem>,
   preferredFallbacks: ReadonlyArray<string> = ["Times New Roman", "Times"]

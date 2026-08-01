@@ -259,7 +259,7 @@ export class CanvasWasmFontManagerAgentInterfaceProvider
   implements editor.api.IDocumentFontCollectionInterfaceProvider
 {
   private manager: UnifiedFontManager;
-  private loadedFonts = new Set<string>();
+  private loadedFontSources = new Map<string, string>();
 
   constructor(
     readonly editor: Editor,
@@ -269,11 +269,25 @@ export class CanvasWasmFontManagerAgentInterfaceProvider
   }
 
   async loadFont(font: { family: string }): Promise<void> {
-    if (this.loadedFonts.has(font.family)) return;
     const item = await this.editor.getFontItem(font.family);
     if (item) {
+      const sourceKey = JSON.stringify({
+        axes: item.axes ?? [],
+        files: item.files,
+      });
+      const previousSource = this.loadedFontSources.get(font.family);
+      if (previousSource === sourceKey) return;
+      if (previousSource !== undefined) {
+        // A host may replace a generic registry entry with an authoritative
+        // byte source after document hydration. The unified manager caches by
+        // family/variant, so use a fresh manager to fetch and register the new
+        // faces rather than returning its stale handle.
+        this.manager = new UnifiedFontManager(
+          new WasmFontAdapter(this.surface)
+        );
+      }
       await this.manager.loadGoogleFont(item);
-      this.loadedFonts.add(font.family);
+      this.loadedFontSources.set(font.family, sourceKey);
     }
   }
 
@@ -281,7 +295,7 @@ export class CanvasWasmFontManagerAgentInterfaceProvider
    * TODO: provide loaded fonts from wasm backend when available.
    */
   listLoadedFonts(): string[] {
-    return Array.from(this.loadedFonts);
+    return Array.from(this.loadedFontSources.keys());
   }
 
   setFallbackFonts(fonts: string[]): void {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { GoogleWebFontListItem } from "@grida/fonts/google";
 import {
+  buildGoogleCssWebfontItems,
   findPreferredMissingFamilyFallback,
   withMissingFamilyFallbacks,
 } from "./bible-helper-local-fonts";
@@ -17,6 +18,36 @@ function item(family: string, url: string): GoogleWebFontListItem {
     menu: url,
   };
 }
+
+describe("buildGoogleCssWebfontItems", () => {
+  test("maps only static gstatic faces to exact weight/style variants", () => {
+    expect(
+      buildGoogleCssWebfontItems([
+        {
+          family: "Kalnia Glaze",
+          css: `
+            @font-face { font-family: 'Kalnia Glaze'; font-style: normal; font-weight: 400; src: url(https://fonts.gstatic.com/s/kalniaglaze/regular.ttf) format('truetype'); }
+            @font-face { font-family: 'Kalnia Glaze'; font-style: normal; font-weight: 700; src: url("https://fonts.gstatic.com/s/kalniaglaze/bold.ttf") format('truetype'); }
+            @font-face { font-family: 'Kalnia Glaze'; font-style: italic; font-weight: 700; src: url(https://fonts.gstatic.com/s/kalniaglaze/bold-italic.ttf) format('truetype'); }
+            @font-face { font-family: 'Kalnia Glaze'; font-style: normal; font-weight: 800; src: url(https://example.com/rejected.ttf); }
+          `,
+        },
+      ])
+    ).toEqual([
+      expect.objectContaining({
+        family: "Kalnia Glaze",
+        version: "rhema-google-static-v1",
+        variants: ["regular", "700", "700italic"],
+        files: {
+          regular: "https://fonts.gstatic.com/s/kalniaglaze/regular.ttf",
+          "700": "https://fonts.gstatic.com/s/kalniaglaze/bold.ttf",
+          "700italic":
+            "https://fonts.gstatic.com/s/kalniaglaze/bold-italic.ttf",
+        },
+      }),
+    ]);
+  });
+});
 
 describe("Bible Helper local font fallbacks", () => {
   test("selects the same installed serif fallback used by browser output", () => {
