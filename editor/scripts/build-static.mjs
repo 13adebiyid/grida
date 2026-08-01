@@ -161,6 +161,24 @@ export async function removeBackgroundImage(_input: unknown): Promise<EmbeddedIm
   return unavailable();
 }
 `,
+  "lib/supabase/server.ts": `const unavailable: any = new Proxy(
+  () => {
+    throw new Error("Supabase server access is unavailable in the embedded editor.");
+  },
+  { get: () => unavailable }
+);
+
+export async function createClient(): Promise<any> { return unavailable; }
+export async function createCIAMClient(): Promise<any> { return unavailable; }
+export async function createLibraryClient(): Promise<any> { return unavailable; }
+export async function createFormsClient(): Promise<any> { return unavailable; }
+export async function createStorageClient(): Promise<any> { return unavailable; }
+export async function createCanvasClient(): Promise<any> { return unavailable; }
+export async function createWestReferralClient(): Promise<any> { return unavailable; }
+export async function createWWWClient(): Promise<any> { return unavailable; }
+export async function createXSBClient(): Promise<any> { return unavailable; }
+export const service_role: any = unavailable;
+`,
 };
 
 const strippedSnapshots = new Map(); // path -> original content (in-memory mirror of on-disk snapshots)
