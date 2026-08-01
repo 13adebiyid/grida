@@ -10,6 +10,12 @@ function source(relative: string): string {
 }
 
 describe("Bible Helper static-export page contract", () => {
+  it("uses the deterministic production bundler path", () => {
+    const buildScript = source("./build-static.mjs");
+
+    expect(buildScript).toContain('["exec", "next", "build", "--webpack"]');
+  });
+
   it("builds the real runtime-param page instead of an inline shadow copy", () => {
     const buildScript = source("./build-static.mjs");
     const page = source(

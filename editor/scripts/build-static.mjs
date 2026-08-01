@@ -463,7 +463,10 @@ function vendorWasm() {
 try {
   park();
   vendorWasm();
-  const r = spawnSync("pnpm", ["exec", "next", "build"], {
+  // Use webpack explicitly for the distributable static export. Next 16's
+  // default Turbopack build can deadlock while compiling this parked-route
+  // graph, leaving every worker asleep and no artifact to authenticate.
+  const r = spawnSync("pnpm", ["exec", "next", "build", "--webpack"], {
     stdio: "inherit",
     env: {
       ...process.env,
