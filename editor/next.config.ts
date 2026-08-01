@@ -37,6 +37,7 @@ const nextConfig: NextConfig = {
         output: "export" as const,
         trailingSlash: true,
         basePath: "/editor",
+        generateBuildId: async () => "rhema-embedded-editor",
       }
     : {}),
   images: STATIC_EXPORT

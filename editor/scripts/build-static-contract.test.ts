@@ -20,6 +20,9 @@ describe("Bible Helper static-export page contract", () => {
     expect(buildScript).toContain('"lib/supabase/server.ts":');
     expect(nextConfig).toContain("NormalModuleReplacementPlugin");
     expect(nextConfig).toContain("/^node:(fs|crypto)$/");
+    expect(nextConfig).toContain(
+      'generateBuildId: async () => "rhema-embedded-editor"'
+    );
   });
 
   it("builds the real runtime-param page instead of an inline shadow copy", () => {
