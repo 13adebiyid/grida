@@ -1116,10 +1116,15 @@ export default function CanvasPlayground({
         items: [...retained, ...locals],
       },
     });
+    const requiredFamilies = new Set(
+      requiredFontFamiliesKey ? requiredFontFamiliesKey.split("\u0000") : []
+    );
     void Promise.all(
-      locals.map(({ family }) => instance.loadFontSync({ family }))
+      locals
+        .filter(({ family }) => requiredFamilies.has(family))
+        .map(({ family }) => instance.loadFontSync({ family }))
     ).catch(() => undefined);
-  }, [fonts, localFontFamilies, profile, instance]);
+  }, [fonts, localFontFamilies, profile, instance, requiredFontFamiliesKey]);
 
   // The registry response alone is not enough: wait for the document's exact
   // font families to finish loading into the canvas backend. The font manager
