@@ -1,4 +1,5 @@
 import {
+  getContainmentDelta,
   getViewportAwareDelta,
   getPackedSubtreeBoundingRect,
 } from "@/grida-canvas/utils/insertion";
@@ -17,6 +18,32 @@ describe("getViewportAwareDelta", () => {
     const rect = { x: 200, y: 200, width: 20, height: 20 };
     const delta = getViewportAwareDelta(viewport, rect);
     expect(delta).toEqual([-160, -160]);
+  });
+});
+
+describe("getContainmentDelta", () => {
+  const bounds = { x: 0, y: 0, width: 1920, height: 1080 };
+
+  it("moves a partially outside layer fully inside the frame", () => {
+    expect(
+      getContainmentDelta(bounds, {
+        x: 1800,
+        y: -20,
+        width: 300,
+        height: 100,
+      })
+    ).toEqual([-180, 20]);
+  });
+
+  it("centers an oversized layer for deterministic clipping", () => {
+    expect(
+      getContainmentDelta(bounds, {
+        x: 0,
+        y: 0,
+        width: 2200,
+        height: 1200,
+      })
+    ).toEqual([-140, -60]);
   });
 });
 

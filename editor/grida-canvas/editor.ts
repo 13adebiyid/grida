@@ -35,6 +35,7 @@ import { dq } from "@/grida-canvas/query";
 import {
   resolveInsertTargetParent,
   resolvePasteTargetParents,
+  resolveRhemaStageId,
 } from "@/grida-canvas/utils/insertion-targeting";
 import { io } from "@grida/io";
 import * as googlefonts from "@grida/fonts/google";
@@ -1022,7 +1023,10 @@ class EditorDocumentStore
       },
     };
 
-    this.insert({ document: packedDoc }, this.mstate.scene_id ?? null);
+    this.insert(
+      { document: packedDoc },
+      resolveInsertTargetParent(this.mstate, []) ?? this.mstate.scene_id ?? null
+    );
 
     // Use the first remapped root (the SVG container) — this is
     // deterministic from the remap, unlike insert()'s return order.
@@ -1049,7 +1053,7 @@ class EditorDocumentStore
           layout_target_height: image.height,
         },
       },
-      this.mstate.scene_id ?? null
+      resolveInsertTargetParent(this.mstate, []) ?? this.mstate.scene_id ?? null
     );
 
     return this.getNodeById(id);
@@ -1060,6 +1064,7 @@ class EditorDocumentStore
     text = ""
   ): NodeProxy<grida.program.nodes.TextSpanNode> {
     const id = this.idgen.next();
+    const rhemaStageId = resolveRhemaStageId(this.mstate);
     // Use explicit scene-level target for programmatic text node creation.
     // Include key text properties so pasted/external text respects the contract.
     this.insert(
@@ -1075,6 +1080,9 @@ class EditorDocumentStore
           layout_inset_left: 0,
           layout_inset_top: 0,
           ...editor.config.fonts.DEFAULT_TEXT_STYLE_INTER,
+          font_size: rhemaStageId
+            ? 48
+            : editor.config.fonts.DEFAULT_TEXT_STYLE_INTER.font_size,
           text_align: "left",
           text_align_vertical: "top",
           fill: {
@@ -1084,7 +1092,7 @@ class EditorDocumentStore
           },
         },
       },
-      this.mstate.scene_id ?? null
+      rhemaStageId ?? this.mstate.scene_id ?? null
     );
 
     return this.getNodeById(id);
@@ -1114,7 +1122,7 @@ class EditorDocumentStore
           },
         },
       },
-      this.mstate.scene_id ?? null
+      resolveInsertTargetParent(this.mstate, []) ?? this.mstate.scene_id ?? null
     );
 
     return this.getNodeById(id);
@@ -1138,7 +1146,7 @@ class EditorDocumentStore
           },
         },
       },
-      this.mstate.scene_id ?? null
+      resolveInsertTargetParent(this.mstate, []) ?? this.mstate.scene_id ?? null
     );
 
     return this.getNodeById(id);
@@ -1288,7 +1296,7 @@ class EditorDocumentStore
     this.dispatch({
       type: "paste-vector-network",
       vector_network,
-      target: scene_id,
+      target: resolveInsertTargetParent(this.mstate, []) ?? scene_id,
     });
   }
 
@@ -1606,7 +1614,7 @@ class EditorDocumentStore
         id,
         prototype,
       },
-      this.mstate.scene_id ?? null
+      resolveInsertTargetParent(this.mstate, []) ?? this.mstate.scene_id ?? null
     );
     return id;
   }
@@ -5984,7 +5992,8 @@ export class EditorSurface
    * - Resolves target parents from selection using UX logic:
    *   - If container selected → paste as child
    *   - If non-container selected → paste as sibling
-   *   - If no selection → paste to scene level
+   *   - If no selection → paste to the fixed Rhema stage when present,
+   *     otherwise scene level
    * - Calls core paste() with explicit target
    * - Updates selection to newly pasted nodes
    *
@@ -6022,23 +6031,16 @@ export class EditorSurface
     // Resolve target parents from current selection using helper function
     let targetParents: Array<string | null>;
 
-    if (currentSelection.length === 0) {
-      // No selection - paste to scene level
+    targetParents = resolvePasteTargetParents(
+      this.state,
+      currentSelection,
+      copiedIds
+    );
+
+    // If no valid targets resolved, fallback to scene level.
+    if (targetParents.length === 0) {
       const scene_id = this.state.scene_id;
       targetParents = scene_id ? [scene_id] : [null];
-    } else {
-      // Use helper to resolve target parents from selection
-      targetParents = resolvePasteTargetParents(
-        this.state,
-        currentSelection,
-        copiedIds
-      );
-
-      // If no valid targets resolved, fallback to scene level
-      if (targetParents.length === 0) {
-        const scene_id = this.state.scene_id;
-        targetParents = scene_id ? [scene_id] : [null];
-      }
     }
 
     // Validate that we can resolve valid targets (reject invalid input)

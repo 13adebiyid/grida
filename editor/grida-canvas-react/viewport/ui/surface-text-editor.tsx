@@ -32,6 +32,7 @@ import { useSingleSelection } from "../surface-hooks";
 import { css } from "@/grida-canvas-utils/css";
 import ContentEditable from "@/components/primitives/contenteditable";
 import type { Scene } from "@grida/canvas-wasm";
+import { pasteClipboardIntoActiveTextScene } from "../../text-clipboard";
 
 // ---------------------------------------------------------------------------
 // SurfaceTextEditor (public API)
@@ -588,32 +589,7 @@ function clipboardCopy(scene: Scene): void {
 }
 
 function clipboardPaste(scene: Scene): void {
-  navigator.clipboard
-    .read()
-    .then(async (items) => {
-      for (const item of items) {
-        if (item.types.includes("text/html")) {
-          const blob = await item.getType("text/html");
-          const html = await blob.text();
-          scene.textEditPasteHtml(html);
-          scene.redraw();
-          return;
-        }
-        if (item.types.includes("text/plain")) {
-          const blob = await item.getType("text/plain");
-          const text = await blob.text();
-          scene.textEditPasteText(text);
-          scene.redraw();
-          return;
-        }
-      }
-    })
-    .catch(() => {
-      navigator.clipboard.readText().then((text) => {
-        scene.textEditPasteText(text);
-        scene.redraw();
-      });
-    });
+  void pasteClipboardIntoActiveTextScene(scene);
 }
 
 // ===========================================================================

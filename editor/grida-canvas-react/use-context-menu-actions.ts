@@ -8,104 +8,23 @@ import assert from "assert";
 import { toast } from "sonner";
 import { keyboardShortcutText } from "@/grida-canvas-hosted/playground/uxhost-shortcut-renderer";
 import {
+  applyVisualLayerStyle,
   parseVisualLayerStyle,
   readVisualLayerStyle,
+  hasVisualLayerDecorations,
   VISUAL_LAYER_STYLE_CLIPBOARD_KEY,
-  type VisualLayerStyle,
 } from "./style-clipboard";
-import { pasteTextMatchingDestinationStyle } from "./paste-match-style";
+import {
+  canPasteTextMatchingDestinationStyle,
+  pasteTextMatchingDestinationStyle,
+} from "./paste-match-style";
+import { pasteClipboardIntoActiveTextScene } from "./text-clipboard";
 
 export interface ContextMenuAction {
   label: string;
   shortcut?: string;
   disabled?: boolean;
   onSelect: () => void;
-}
-
-function safeCall(
-  command: ((...args: unknown[]) => unknown) | undefined,
-  ...args: unknown[]
-): boolean {
-  try {
-    command?.(...args);
-    return Boolean(command);
-  } catch {
-    return false;
-  }
-}
-
-function applyVisualLayerStyle(
-  editor: ReturnType<typeof useCurrentEditor>,
-  id: string,
-  style: VisualLayerStyle
-): void {
-  const commands = editor.commands as unknown as Record<
-    string,
-    (...args: unknown[]) => unknown
-  >;
-  const set = (value: unknown) => ({ type: "set", value });
-  safeCall(commands.changeNodePropertyStrokes, id, style.stroke_paints ?? []);
-  safeCall(
-    commands.changeNodePropertyStrokeWidth,
-    id,
-    set(style.stroke_width ?? 0)
-  );
-  safeCall(
-    commands.changeNodePropertyStrokeAlign,
-    id,
-    style.stroke_align ?? undefined
-  );
-  safeCall(
-    commands.changeNodePropertyStrokeCap,
-    id,
-    style.stroke_cap ?? undefined
-  );
-  safeCall(
-    commands.changeNodePropertyStrokeJoin,
-    id,
-    style.stroke_join ?? undefined
-  );
-  safeCall(
-    commands.changeNodePropertyStrokeMiterLimit,
-    id,
-    style.stroke_miter_limit ?? undefined
-  );
-  safeCall(
-    commands.changeNodePropertyStrokeDashArray,
-    id,
-    style.stroke_dash_array ?? undefined
-  );
-  safeCall(
-    commands.changeNodePropertyStrokeDecorationStart,
-    id,
-    style.stroke_decoration_start ?? undefined
-  );
-  safeCall(
-    commands.changeNodePropertyStrokeDecorationEnd,
-    id,
-    style.stroke_decoration_end ?? undefined
-  );
-  safeCall(
-    commands.changeNodePropertyStrokeTopWidth,
-    id,
-    style.rectangular_stroke_width_top ?? undefined
-  );
-  safeCall(
-    commands.changeNodePropertyStrokeRightWidth,
-    id,
-    style.rectangular_stroke_width_right ?? undefined
-  );
-  safeCall(
-    commands.changeNodePropertyStrokeBottomWidth,
-    id,
-    style.rectangular_stroke_width_bottom ?? undefined
-  );
-  safeCall(
-    commands.changeNodePropertyStrokeLeftWidth,
-    id,
-    style.rectangular_stroke_width_left ?? undefined
-  );
-  safeCall(commands.changeNodeFeShadows, id, style.fe_shadows ?? undefined);
 }
 
 type ContextMenuActionType =
@@ -152,7 +71,19 @@ export function useContextMenuActions(ids: string[]): ContextMenuActions {
 
   const hasSelection = ids.length > 0;
   const isSingle = ids.length === 1;
+  const singleId = isSingle ? ids[0]! : null;
   const isEditingText = contentEditMode?.type === "text";
+  const selectedTextNodeId =
+    singleId &&
+    (nodes[singleId]?.type === "tspan" || nodes[singleId]?.type === "text")
+      ? singleId
+      : null;
+  let hasActiveWasmTextEdit = false;
+  try {
+    hasActiveWasmTextEdit = editor.wasmScene?.textEditIsActive() ?? false;
+  } catch {
+    // A disposed renderer is not an active text destination.
+  }
   const canGroup = backend === "canvas" && hasSelection;
 
   const canFlatten =
@@ -179,8 +110,17 @@ export function useContextMenuActions(ids: string[]): ContextMenuActions {
     ids.length === 1 ? (ids[0] as string) : "selection";
 
   const handlePaste = useCallback(async () => {
+    const scene = editor.wasmScene;
+    if (scene?.textEditIsActive()) {
+      try {
+        await pasteClipboardIntoActiveTextScene(scene);
+      } catch {
+        toast.error("Couldn't read text from the clipboard");
+      }
+      return;
+    }
     await onpaste_external_event();
-  }, [onpaste_external_event]);
+  }, [editor, onpaste_external_event]);
 
   return useMemo<ContextMenuActions>(
     () => ({
@@ -199,16 +139,32 @@ export function useContextMenuActions(ids: string[]): ContextMenuActions {
       // See test/canvas-clipboard-paste-match-text-style.md.
       pasteAndMatchTextStyle: {
         label: "Paste and match style",
-        disabled: !isEditingText,
+        disabled: !canPasteTextMatchingDestinationStyle({
+          isEditingText,
+          hasActiveSceneTextEdit: hasActiveWasmTextEdit,
+          selectedTextNodeId,
+        }),
         onSelect: () => {
           void window.navigator.clipboard.readText().then(
             (text) => {
               const scene = editor.wasmScene;
-              if (scene && pasteTextMatchingDestinationStyle(scene, text)) {
+              if (
+                pasteTextMatchingDestinationStyle(
+                  scene,
+                  text,
+                  selectedTextNodeId
+                    ? {
+                        nodeId: selectedTextNodeId,
+                        replaceText: (nodeId, value) =>
+                          editor.commands.changeNodePropertyText(nodeId, value),
+                      }
+                    : undefined
+                )
+              ) {
                 toast.success("Pasted and matched text style");
                 return;
               }
-              toast.error("Enter text editing before pasting");
+              toast.error("Select a text layer before pasting");
             },
             () => toast.error("Couldn't read text from the clipboard")
           );
@@ -229,7 +185,13 @@ export function useContextMenuActions(ids: string[]): ContextMenuActions {
               VISUAL_LAYER_STYLE_CLIPBOARD_KEY,
               JSON.stringify(style)
             );
-            toast.success("Copied layer style");
+            if (hasVisualLayerDecorations(style)) {
+              toast.success("Copied border, shadow, and glow style");
+            } else {
+              toast.info(
+                "This layer has no border, shadow, or glow; pasting clears those decorations"
+              );
+            }
           } catch {
             toast.error("Couldn't copy layer style");
           }
@@ -252,7 +214,11 @@ export function useContextMenuActions(ids: string[]): ContextMenuActions {
               toast.error("Copied layer style is invalid");
               return;
             }
-            ids.forEach((id) => applyVisualLayerStyle(editor, id, style));
+            const commands = editor.commands as unknown as Record<
+              string,
+              (...args: unknown[]) => unknown
+            >;
+            ids.forEach((id) => applyVisualLayerStyle(commands, id, style));
             toast.success("Pasted layer style");
           } catch {
             toast.error("Couldn't paste layer style");
@@ -373,6 +339,8 @@ export function useContextMenuActions(ids: string[]): ContextMenuActions {
       handlePaste,
       hasSelection,
       isEditingText,
+      hasActiveWasmTextEdit,
+      selectedTextNodeId,
       canFlatten,
       targetSingleOrSelection,
       backend,

@@ -3,22 +3,13 @@ import { dq } from "@/grida-canvas/query";
 import grida from "@grida/schema";
 import tree from "@grida/tree";
 import { perf } from "@/grida-canvas/perf";
-
-function getRhemaStageId(context: editor.state.IEditorState): string | null {
-  const scene_id = context.scene_id;
-  if (!scene_id) return null;
-  const sceneMeta = context.document.metadata?.[scene_id];
-  const userdata = sceneMeta?.userdata as Record<string, unknown> | undefined;
-  if (userdata?.rhema_profile !== "bible-helper") return null;
-  const stageId = userdata?.rhema_stage_node_id;
-  return typeof stageId === "string" ? stageId : null;
-}
+import { resolveRhemaStageId } from "@/grida-canvas/utils/insertion-targeting";
 
 function isRhemaStageNode(
   context: editor.state.IEditorState,
   node_id: string
 ): boolean {
-  const stageId = getRhemaStageId(context);
+  const stageId = resolveRhemaStageId(context);
   return !!stageId && node_id === stageId;
 }
 

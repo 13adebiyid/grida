@@ -1,7 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
-import { pasteTextMatchingDestinationStyle } from "./paste-match-style";
+import {
+  canPasteTextMatchingDestinationStyle,
+  pasteTextMatchingDestinationStyle,
+} from "./paste-match-style";
 
 describe("paste and match text style", () => {
+  it("enables for a selected text layer without requiring caret mode", () => {
+    expect(
+      canPasteTextMatchingDestinationStyle({
+        isEditingText: false,
+        hasActiveSceneTextEdit: false,
+        selectedTextNodeId: "title",
+      })
+    ).toBe(true);
+    expect(
+      canPasteTextMatchingDestinationStyle({
+        isEditingText: false,
+        hasActiveSceneTextEdit: false,
+        selectedTextNodeId: null,
+      })
+    ).toBe(false);
+  });
+
   it("inserts plain text into the active destination run", () => {
     const paste = vi.fn<(text: string) => void>();
     const redraw = vi.fn<() => void>();
@@ -32,5 +52,21 @@ describe("paste and match text style", () => {
 
     expect(result).toBe(false);
     expect(paste).not.toHaveBeenCalled();
+  });
+
+  it("replaces a selected text node while preserving its node typography", () => {
+    const replaceText = vi.fn<(nodeId: string, text: string) => void>();
+    const result = pasteTextMatchingDestinationStyle(
+      {
+        textEditIsActive: () => false,
+        textEditPasteText: vi.fn<(text: string) => void>(),
+        redraw: vi.fn<() => void>(),
+      },
+      "replacement",
+      { nodeId: "title", replaceText }
+    );
+
+    expect(result).toBe(true);
+    expect(replaceText).toHaveBeenCalledWith("title", "replacement");
   });
 });

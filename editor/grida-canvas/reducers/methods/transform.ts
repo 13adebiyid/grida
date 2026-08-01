@@ -21,6 +21,7 @@ import { createTrackedGraph } from "../utils/tracked-graph";
 import type { ReducerContext } from "..";
 import { self_update_gesture_scale } from "./scale";
 import { perf } from "@/grida-canvas/perf";
+import { resolveRhemaStageId } from "@/grida-canvas/utils/insertion-targeting";
 
 type StageBoundsConfig = {
   stageId: string;
@@ -31,18 +32,10 @@ function getRhemaStageBoundsConfig(
   draft: Draft<editor.state.IEditorState>,
   context: ReducerContext
 ): StageBoundsConfig | null {
-  if (!draft.scene_id) return null;
-
-  const sceneMeta = draft.document.metadata?.[draft.scene_id];
-  const userdata = sceneMeta?.userdata as
-    | Record<string, string | number | boolean | null | undefined>
-    | undefined;
-
-  if (userdata?.rhema_profile !== "bible-helper") return null;
-  if (userdata?.rhema_lock_to_stage !== true) return null;
-
-  const stageId = userdata?.rhema_stage_node_id;
-  if (typeof stageId !== "string" || stageId.length === 0) return null;
+  const stageId = resolveRhemaStageId(
+    draft as unknown as editor.state.IEditorState
+  );
+  if (!stageId) return null;
 
   const bounds = context.geometry.getNodeAbsoluteBoundingRect(stageId);
   if (!bounds) return null;

@@ -63,3 +63,38 @@ export function getViewportAwareDelta(
   const rc = cmath.rect.getCenter(rect);
   return [vc[0] - rc[0], vc[1] - rc[1]];
 }
+
+/** Translate a rectangle so it is contained by a fixed authoring frame.
+ * Oversized rectangles are centered on the axis that cannot be contained,
+ * producing deterministic symmetric clipping instead of an arbitrary edge.
+ */
+export function getContainmentDelta(
+  bounds: cmath.Rectangle,
+  rect: cmath.Rectangle
+): cmath.Vector2 {
+  const boundsRight = bounds.x + bounds.width;
+  const boundsBottom = bounds.y + bounds.height;
+  const rectRight = rect.x + rect.width;
+  const rectBottom = rect.y + rect.height;
+
+  let dx = 0;
+  let dy = 0;
+
+  if (rect.width > bounds.width) {
+    dx = cmath.rect.getCenter(bounds)[0] - cmath.rect.getCenter(rect)[0];
+  } else if (rect.x < bounds.x) {
+    dx = bounds.x - rect.x;
+  } else if (rectRight > boundsRight) {
+    dx = boundsRight - rectRight;
+  }
+
+  if (rect.height > bounds.height) {
+    dy = cmath.rect.getCenter(bounds)[1] - cmath.rect.getCenter(rect)[1];
+  } else if (rect.y < bounds.y) {
+    dy = bounds.y - rect.y;
+  } else if (rectBottom > boundsBottom) {
+    dy = boundsBottom - rectBottom;
+  }
+
+  return [dx, dy];
+}

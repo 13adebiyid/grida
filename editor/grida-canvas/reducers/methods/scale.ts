@@ -11,6 +11,7 @@ import updateNodeTransform from "../node-transform.reducer";
 import { getSnapTargets, threshold } from "../tools/snap";
 import { snapObjectsResize } from "../tools/snap-resize";
 import { css } from "@/grida-canvas-utils/css";
+import { resolveRhemaStageId } from "@/grida-canvas/utils/insertion-targeting";
 
 /**
  * Scale gesture orchestration.
@@ -32,6 +33,109 @@ function deepClone<T>(value: T): T {
   } catch {
     return JSON.parse(JSON.stringify(value));
   }
+}
+
+function getScaledRect(
+  rect: cmath.Rectangle,
+  origin: cmath.Vector2,
+  movement: cmath.Vector2,
+  preserveAspectRatio: boolean,
+  targetAspectRatio?: [number, number]
+): cmath.Rectangle {
+  let scale: cmath.Vector2;
+  if (preserveAspectRatio) {
+    const dominantAxis =
+      Math.abs(movement[0]) > Math.abs(movement[1]) ? "x" : "y";
+    if (targetAspectRatio) {
+      const ratio = targetAspectRatio[0] / targetAspectRatio[1];
+      if (dominantAxis === "x") {
+        const width = rect.width + movement[0];
+        scale = [width / rect.width, width / ratio / rect.height];
+      } else {
+        const height = rect.height + movement[1];
+        scale = [(height * ratio) / rect.width, height / rect.height];
+      }
+    } else {
+      const factor =
+        dominantAxis === "x"
+          ? (rect.width + movement[0]) / rect.width
+          : (rect.height + movement[1]) / rect.height;
+      scale = [factor, factor];
+    }
+  } else {
+    scale = [
+      (rect.width + movement[0]) / rect.width,
+      (rect.height + movement[1]) / rect.height,
+    ];
+  }
+  return cmath.rect.positive(cmath.rect.scale(rect, origin, scale));
+}
+
+function containsRect(bounds: cmath.Rectangle, rect: cmath.Rectangle): boolean {
+  const epsilon = 0.000001;
+  return (
+    rect.x >= bounds.x - epsilon &&
+    rect.y >= bounds.y - epsilon &&
+    rect.x + rect.width <= bounds.x + bounds.width + epsilon &&
+    rect.y + rect.height <= bounds.y + bounds.height + epsilon
+  );
+}
+
+/** Limit a resize gesture to a fixed frame without changing its anchor or
+ * aspect-ratio semantics. Binary search uses the same rectangle transform as
+ * updateNodeTransform, so the selection overlay and authored geometry share
+ * one result even for corner and center-origin resizes. */
+export function constrainScaleMovementToBounds(args: {
+  rect: cmath.Rectangle;
+  origin: cmath.Vector2;
+  movement: cmath.Vector2;
+  bounds: cmath.Rectangle;
+  preserveAspectRatio: boolean;
+  targetAspectRatio?: [number, number];
+}): cmath.Vector2 {
+  const { rect, origin, movement, bounds } = args;
+  if (!containsRect(bounds, rect)) return movement;
+  if (
+    containsRect(
+      bounds,
+      getScaledRect(
+        rect,
+        origin,
+        movement,
+        args.preserveAspectRatio,
+        args.targetAspectRatio
+      )
+    )
+  ) {
+    return movement;
+  }
+
+  let low = 0;
+  let high = 1;
+  for (let i = 0; i < 24; i++) {
+    const factor = (low + high) / 2;
+    const candidate: cmath.Vector2 = [
+      movement[0] * factor,
+      movement[1] * factor,
+    ];
+    if (
+      containsRect(
+        bounds,
+        getScaledRect(
+          rect,
+          origin,
+          candidate,
+          args.preserveAspectRatio,
+          args.targetAspectRatio
+        )
+      )
+    ) {
+      low = factor;
+    } else {
+      high = factor;
+    }
+  }
+  return [movement[0] * low, movement[1] * low];
 }
 
 export function self_start_gesture_scale(
@@ -294,11 +398,46 @@ function self_update_gesture_resize_scale(
   }
   // #endregion
 
-  const movement = cmath.vector2.multiply(
+  let movement = cmath.vector2.multiply(
     cmath.compass.cardinal_direction_vector[direction],
     adjusted_raw_movement,
     transform_with_center_origin === "on" ? [2, 2] : [1, 1]
   );
+
+  const rhemaStageId = resolveRhemaStageId(
+    draft as unknown as editor.state.IEditorState
+  );
+  const stageBounds = rhemaStageId
+    ? context.geometry.getNodeAbsoluteBoundingRect(rhemaStageId)
+    : null;
+  const selectionIsInsideStage =
+    rhemaStageId != null &&
+    selection.every((id) => {
+      let cursor: string | null = id;
+      while (cursor) {
+        if (cursor === rhemaStageId) return true;
+        cursor = dq.getParentId(draft.document_ctx, cursor);
+      }
+      return false;
+    });
+  if (stageBounds && selectionIsInsideStage) {
+    const firstNode = draft.document.nodes[selection[0]!] as
+      | grida.program.nodes.UnknownNode
+      | undefined;
+    const targetAspectRatio = firstNode?.layout_target_aspect_ratio as
+      | [number, number]
+      | undefined;
+    movement = constrainScaleMovementToBounds({
+      rect: initial_bounding_rectangle,
+      origin,
+      movement,
+      bounds: stageBounds,
+      preserveAspectRatio:
+        transform_with_preserve_aspect_ratio === "on" ||
+        targetAspectRatio !== undefined,
+      targetAspectRatio,
+    });
+  }
 
   let i = 0;
   for (const node_id of selection) {

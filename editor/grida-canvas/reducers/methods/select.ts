@@ -2,6 +2,7 @@ import type { Draft } from "immer";
 import { editor } from "@/grida-canvas";
 import assert from "assert";
 import { dq } from "@/grida-canvas/query";
+import { resolveRhemaStageId } from "@/grida-canvas/utils/insertion-targeting";
 
 /**
  * Selects nodes within the current scene (scene content).
@@ -38,8 +39,13 @@ export function self_selectNode<S extends editor.state.IEditorState>(
   // Filter out scene nodes - scenes should never be selectable
   // Scenes are organizational containers, not selectable content
   const scenes_ref_set = new Set(draft.document.scenes_ref);
+  const rhemaStageId = resolveRhemaStageId(
+    draft as unknown as editor.state.IEditorState
+  );
   const filtered_node_ids = node_ids.filter(
-    (node_id) => !scenes_ref_set.has(node_id)
+    (node_id) =>
+      !scenes_ref_set.has(node_id) &&
+      (!rhemaStageId || node_id !== rhemaStageId)
   );
 
   for (const node_id of filtered_node_ids) {

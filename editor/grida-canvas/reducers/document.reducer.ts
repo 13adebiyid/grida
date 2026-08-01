@@ -47,8 +47,10 @@ import {
 import { self_apply_scale_by_factor } from "./methods/scale";
 import {
   getPackedSubtreeBoundingRect,
+  getContainmentDelta,
   getViewportAwareDelta,
 } from "@/grida-canvas/utils/insertion";
+import { resolveRhemaStageId } from "@/grida-canvas/utils/insertion-targeting";
 import {
   self_wrapNodes,
   self_ungroup,
@@ -703,6 +705,21 @@ export default function documentReducer<S extends editor.state.IEditorState>(
         _inset_rect,
         cmath.transform.invert(state.transform)
       );
+      const rhemaStageId = resolveRhemaStageId(state);
+      const rhemaStageNode = rhemaStageId
+        ? state.document.nodes[rhemaStageId]
+        : null;
+      const rhemaStageLocalBounds =
+        rhemaStageNode?.type === "container" &&
+        typeof rhemaStageNode.layout_target_width === "number" &&
+        typeof rhemaStageNode.layout_target_height === "number"
+          ? {
+              x: 0,
+              y: 0,
+              width: rhemaStageNode.layout_target_width,
+              height: rhemaStageNode.layout_target_height,
+            }
+          : null;
 
       return updateState(state, (draft) => {
         for (const target_parent of target_parents) {
@@ -714,8 +731,12 @@ export default function documentReducer<S extends editor.state.IEditorState>(
               );
 
             const box = getPackedSubtreeBoundingRect(sub);
-            const delta = getViewportAwareDelta(viewport_rect, box);
-            if (delta) {
+            const parent = target_parent;
+            const delta =
+              parent === rhemaStageId && rhemaStageLocalBounds
+                ? getContainmentDelta(rhemaStageLocalBounds, box)
+                : getViewportAwareDelta(viewport_rect, box);
+            if (delta && (delta[0] !== 0 || delta[1] !== 0)) {
               sub.scene.children_refs.forEach((node_id) => {
                 const node = sub.nodes[node_id];
                 if (
@@ -734,9 +755,7 @@ export default function documentReducer<S extends editor.state.IEditorState>(
               box.y += delta[1];
             }
 
-            const parent = target_parent;
-
-            if (parent) {
+            if (parent && parent !== rhemaStageId) {
               const parent_rect =
                 context.geometry.getNodeAbsoluteBoundingRect(parent);
               if (parent_rect) {
@@ -944,9 +963,53 @@ export default function documentReducer<S extends editor.state.IEditorState>(
           return node?.type === "container" && node.name === "Canvas 1920x1080";
         }
       );
+      const existingRhemaStageId = resolveRhemaStageId(state);
+      const requestedParent = action.target;
+      const parent: string | null =
+        existingRhemaStageId &&
+        !sub_root_is_rhema_stage &&
+        (requestedParent == null || requestedParent === state.scene_id)
+          ? existingRhemaStageId
+          : requestedParent;
       const skipAutoPlacement =
-        (action.target != null && is_bible_helper_scene) ||
+        (existingRhemaStageId != null && parent === existingRhemaStageId) ||
+        (parent != null && is_bible_helper_scene) ||
         sub_root_is_rhema_stage;
+
+      if (parent === existingRhemaStageId && existingRhemaStageId) {
+        const stageNode = state.document.nodes[existingRhemaStageId];
+        if (
+          stageNode?.type === "container" &&
+          typeof stageNode.layout_target_width === "number" &&
+          typeof stageNode.layout_target_height === "number"
+        ) {
+          const box = getPackedSubtreeBoundingRect(sub);
+          const delta = getContainmentDelta(
+            {
+              x: 0,
+              y: 0,
+              width: stageNode.layout_target_width,
+              height: stageNode.layout_target_height,
+            },
+            box
+          );
+          if (delta[0] !== 0 || delta[1] !== 0) {
+            sub.scene.children_refs.forEach((node_id) => {
+              const node = sub.nodes[node_id];
+              if (
+                "layout_positioning" in node &&
+                node.layout_positioning === "absolute" &&
+                "layout_inset_left" in node &&
+                "layout_inset_top" in node
+              ) {
+                node.layout_inset_left =
+                  (node.layout_inset_left ?? 0) + delta[0];
+                node.layout_inset_top = (node.layout_inset_top ?? 0) + delta[1];
+              }
+            });
+          }
+        }
+      }
 
       if (!skipAutoPlacement) {
         const box = getPackedSubtreeBoundingRect(sub);
@@ -1008,8 +1071,6 @@ export default function documentReducer<S extends editor.state.IEditorState>(
           }
         });
       }
-
-      const parent: string | null = action.target;
 
       // World -> parent-local conversion for the PACKER's placement. When
       // auto-placement was skipped (Bible-Helper), the prototype's insets are

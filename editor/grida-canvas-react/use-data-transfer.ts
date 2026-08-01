@@ -18,11 +18,48 @@ import { nanoid } from "nanoid";
 import { datatransfer } from "@/grida-canvas/data-transfer";
 import type { editor } from "@/grida-canvas";
 import grida from "@grida/schema";
+import { resolveRhemaStageId } from "@/grida-canvas/utils/insertion-targeting";
+import { getContainmentDelta } from "@/grida-canvas/utils/insertion";
 
 const RHEMA_STAGE_NAME = "Canvas 1920x1080";
 const RHEMA_STAGE_WIDTH = 1920;
 const RHEMA_STAGE_HEIGHT = 1080;
 const RHEMA_TRANSPARENT = kolor.colorformats.RGBA32F.fromHEX("#00000000");
+
+function positionInsertedNode(
+  instance: Editor,
+  nodeId: string,
+  canvasPosition: cmath.Vector2
+): void {
+  const stageId = resolveRhemaStageId(instance.state);
+  const stageRect = stageId
+    ? instance.geometryProvider.getNodeAbsoluteBoundingRect(stageId)
+    : null;
+  const nodeRect =
+    instance.geometryProvider.getNodeAbsoluteBoundingRect(nodeId);
+  const containmentDelta =
+    stageRect && nodeRect
+      ? getContainmentDelta(stageRect, {
+          x: canvasPosition[0],
+          y: canvasPosition[1],
+          width: nodeRect.width,
+          height: nodeRect.height,
+        })
+      : cmath.vector2.zero;
+  const containedCanvasPosition = cmath.vector2.add(
+    canvasPosition,
+    containmentDelta
+  );
+  const localPosition = stageRect
+    ? cmath.vector2.sub(containedCanvasPosition, [stageRect.x, stageRect.y])
+    : containedCanvasPosition;
+
+  instance.commands.changeNodePropertyPositioning(nodeId, {
+    layout_positioning: "absolute",
+    layout_inset_left: Math.round(localPosition[0]),
+    layout_inset_top: Math.round(localPosition[1]),
+  });
+}
 
 /**
  * Hook that provides file insertion utilities for the Grida canvas editor.
@@ -283,28 +320,17 @@ export function useInsertFile() {
     ) => {
       const node = await instance.commands.createNodeFromSvg(svg);
 
-      const center_dx =
-        typeof node.$.layout_target_width === "number" &&
-        node.$.layout_target_width > 0
-          ? node.$.layout_target_width / 2
-          : 0;
-
-      const center_dy =
-        typeof node.$.layout_target_height === "number" &&
-        node.$.layout_target_height > 0
-          ? node.$.layout_target_height / 2
-          : 0;
-
-      const [x, y] = instance.camera.clientPointToCanvasPoint(
-        cmath.vector2.sub(
-          position ? [position.clientX, position.clientY] : [0, 0],
-          [center_dx, center_dy]
-        )
+      const [pointerX, pointerY] = instance.camera.clientPointToCanvasPoint(
+        position ? [position.clientX, position.clientY] : [0, 0]
       );
+      const rect = instance.geometryProvider.getNodeAbsoluteBoundingRect(
+        node.id
+      );
+      const x = pointerX - (rect?.width ?? 0) / 2;
+      const y = pointerY - (rect?.height ?? 0) / 2;
 
       node.$.name = name;
-      node.$.layout_inset_left = x;
-      node.$.layout_inset_top = y;
+      positionInsertedNode(instance, node.id, [x, y]);
     },
     [instance]
   );
@@ -324,8 +350,7 @@ export function useInsertFile() {
 
       const node = instance.commands.createMarkdownNode(markdown);
       node.$.name = name;
-      node.$.layout_inset_left = x;
-      node.$.layout_inset_top = y;
+      positionInsertedNode(instance, node.id, [x, y]);
     },
     [instance]
   );
@@ -504,13 +529,12 @@ export function useDataTransferEventTarget() {
       const node = instance.commands.createTextNode(text);
       node.$.name = text;
       node.$.text = text;
-      node.$.layout_inset_left = x;
-      node.$.layout_inset_top = y;
       node.$.fill = {
         type: "solid",
         color: kolor.colorformats.RGBA32F.BLACK,
         active: true,
       } satisfies cg.Paint;
+      positionInsertedNode(instance, node.id, [x, y]);
     },
     [instance]
   );

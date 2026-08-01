@@ -89,7 +89,13 @@ function sceneDoc(opts?: {
     images: {},
     properties: {},
     metadata: {
-      scene: { userdata: { rhema_profile: "bible-helper" } },
+      scene: {
+        userdata: {
+          rhema_profile: "bible-helper",
+          rhema_lock_to_stage: true,
+          ...(opts?.stage ? { rhema_stage_node_id: "stage" } : {}),
+        },
+      },
     },
   } as unknown as grida.program.document.Document;
 }
@@ -186,5 +192,39 @@ describe("insert placement in a bible-helper scene", () => {
     expect(photo.layout_inset_left).toBe(240);
     expect(photo.layout_inset_top).toBe(0);
     expect(next.document.links["stage"]).toContain("photo");
+  });
+
+  test("a scene-root paste is canonically reparented and contained by the stage", () => {
+    const state = initState(sceneDoc({ stage: { left: 0, top: 0 } }));
+    const action: DocumentEditorInsertNodeAction = {
+      type: "insert",
+      target: "scene",
+      id: "pasted-text",
+      prototype: {
+        type: "tspan",
+        name: "Pasted text",
+        text: "Pasted text",
+        layout_positioning: "absolute",
+        layout_inset_left: 1900,
+        layout_inset_top: -20,
+        layout_target_width: 200,
+        layout_target_height: 80,
+      } as unknown as grida.program.nodes.NodePrototype,
+    };
+
+    const next = documentReducer(
+      state,
+      action,
+      createReducerContext() as unknown as ReducerContext
+    );
+
+    expect(next.document.links.scene).not.toContain("pasted-text");
+    expect(next.document.links.stage).toContain("pasted-text");
+    const text = next.document.nodes["pasted-text"] as unknown as {
+      layout_inset_left: number;
+      layout_inset_top: number;
+    };
+    expect(text.layout_inset_left).toBe(1720);
+    expect(text.layout_inset_top).toBe(0);
   });
 });
