@@ -17,6 +17,7 @@ import {
   createLiveSceneThumbnailRenderer,
   projectLiveSceneArchiveBackground,
   scanLiveSceneCapabilities,
+  type LiveSceneSurface,
 } from "./index";
 
 afterEach(() => {
@@ -478,6 +479,67 @@ describe("live scene runtime", () => {
     expect(gl.deleteContext).toHaveBeenCalledTimes(1);
     expect(gl.deleteContext).toHaveBeenCalledWith(41);
     expect(canvas.dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  it("restores each live surface's WebGL context before drawing when two canvases coexist", async () => {
+    const first = surface();
+    const second = surface();
+    let nextHandle = 40;
+    const gl = {
+      currentContext: null as { handle: number } | null,
+      makeContextCurrent: vi.fn<(handle: number) => void>((handle) => {
+        gl.currentContext = handle > 0 ? { handle } : null;
+      }),
+      deleteContext: vi.fn<(handle: number) => void>(),
+    };
+    const surfaces = [first, second];
+    canvasWasmMocks.init.mockResolvedValue({
+      module: { GL: gl },
+      createWebGLCanvasSurface: vi.fn<() => LiveSceneSurface>(() => {
+        const handle = ++nextHandle;
+        gl.currentContext = { handle };
+        const created = surfaces[handle - 41];
+        created.resize.mockImplementation(() => {
+          if (gl.currentContext?.handle !== handle) {
+            throw new Error(
+              `surface ${handle} drew through context ${gl.currentContext?.handle}`
+            );
+          }
+        });
+        created.redraw.mockImplementation(() => {
+          if (gl.currentContext?.handle !== handle) {
+            throw new Error(
+              `surface ${handle} redrew through context ${gl.currentContext?.handle}`
+            );
+          }
+        });
+        return created;
+      }),
+    });
+    const options = {
+      archive: { document: new Uint8Array([1]), images: {} },
+      snapshot,
+      sceneId: "scene",
+      expectedSchemaVersion: "test-schema",
+      afterPaint: async () => {},
+    } as const;
+    const firstRuntime = await createLiveSceneRuntime({
+      ...options,
+      canvas: { width: 1920, height: 1080 } as HTMLCanvasElement,
+    });
+    const firstRedrawCount = first.redraw.mock.calls.length;
+    const secondRuntime = await createLiveSceneRuntime({
+      ...options,
+      canvas: { width: 1280, height: 720 } as HTMLCanvasElement,
+    });
+
+    expect(first.redraw).toHaveBeenCalledTimes(firstRedrawCount + 1);
+    expect(() => firstRuntime.resize(960, 540)).not.toThrow();
+    expect(() => secondRuntime.resize(640, 360)).not.toThrow();
+    expect(gl.makeContextCurrent.mock.calls.slice(-2)).toEqual([[41], [42]]);
+
+    firstRuntime.dispose();
+    secondRuntime.dispose();
   });
 
   it("still releases a default WebGL context when surface disposal throws", async () => {
@@ -1817,9 +1879,7 @@ describe("presentation-frame camera authority", () => {
       afterPaint: async () => {},
     });
     expect(fake.getNodeAbsoluteBoundingBox).toHaveBeenCalledWith("stage");
-    expect(fake.getNodeAbsoluteBoundingBox).not.toHaveBeenCalledWith(
-      "<scene>"
-    );
+    expect(fake.getNodeAbsoluteBoundingBox).not.toHaveBeenCalledWith("<scene>");
     // dpr=1, container == canvas → identity scale centered on the frame. If
     // the camera had used the inflated union, scale would be 1920/2400=0.8.
     const transform = fake.setMainCameraTransform.mock.calls.at(-1)?.[0];
@@ -1876,9 +1936,7 @@ describe("presentation-frame camera authority", () => {
     expect(fake.getNodeAbsoluteBoundingBox).toHaveBeenCalledWith("stageA");
     await runtime.activateScene("sceneB");
     expect(fake.getNodeAbsoluteBoundingBox).toHaveBeenCalledWith("stageB");
-    expect(fake.getNodeAbsoluteBoundingBox).not.toHaveBeenCalledWith(
-      "<scene>"
-    );
+    expect(fake.getNodeAbsoluteBoundingBox).not.toHaveBeenCalledWith("<scene>");
     runtime.dispose();
   });
 });

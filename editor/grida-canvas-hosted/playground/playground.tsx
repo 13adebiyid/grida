@@ -47,6 +47,7 @@ import {
 import {
   BIBLE_HELPER_LIST_SYSTEM_FONTS_REQUEST,
   BIBLE_HELPER_LIST_SYSTEM_FONTS_RESULT,
+  buildGoogleCssWebfontItems,
   buildLocalWebfontItems,
   findPreferredMissingFamilyFallback,
   withMissingFamilyFallbacks,
@@ -703,9 +704,9 @@ export default function CanvasPlayground({
       .sort()
       .join("\u0000")
   );
-  // Bible Helper: the operator's INSTALLED fonts, fetched from the host and
-  // merged into the webfont registry so they appear in the picker AND load
-  // through the existing pipeline (getFontItem → fetch(files[v]) → addFont).
+  // Bible Helper: host-resolved installed and Google static fonts, merged into
+  // the registry so the picker and WASM canvas consume the same exact bytes as
+  // Rhema's Preview/Audience renderers.
   const localFontItemsRef = useRef<ReturnType<typeof buildLocalWebfontItems>>(
     []
   );
@@ -1022,9 +1023,9 @@ export default function CanvasPlayground({
     profile,
   ]);
 
-  // Editor → host: ask for the operator's installed fonts, then keep them in a
-  // ref + a family-name set (the latter tells the picker to render a local CSS
-  // preview instead of the Google preview image). Requested once on mount.
+  // Editor → host: ask for installed fonts plus exact static Google faces for
+  // the current document families. The host owns the fixed-origin Google CSS
+  // seam, so authoring and output never diverge on variable/subset font files.
   useEffect(() => {
     if (profile !== "bible-helper" || !parentOrigin) {
       setSystemFontCatalogReceived(true);
@@ -1032,29 +1033,49 @@ export default function CanvasPlayground({
     }
     if (typeof window === "undefined" || window.parent === window) return;
     setSystemFontCatalogReceived(false);
+    const requestId = crypto.randomUUID();
     const onMessage = (e: MessageEvent) => {
       if (e.origin !== parentOrigin || e.source !== window.parent) return;
-      const d = e.data as { type?: unknown; fonts?: unknown } | null;
-      if (!d || d.type !== BIBLE_HELPER_LIST_SYSTEM_FONTS_RESULT) return;
+      const d = e.data as {
+        type?: unknown;
+        requestId?: unknown;
+        fonts?: unknown;
+        googleFontCss?: unknown;
+      } | null;
+      if (
+        !d ||
+        d.type !== BIBLE_HELPER_LIST_SYSTEM_FONTS_RESULT ||
+        d.requestId !== requestId
+      )
+        return;
       const systemItems = buildLocalWebfontItems(d.fonts);
-      if (systemItems.length > 0) {
-        systemFontItemsRef.current = systemItems;
-        const items = withMissingFamilyFallbacks(
-          systemItems,
-          instance.doc.state.fontfaces.map((face) => face.family)
-        );
-        localFontItemsRef.current = items;
-        setLocalFontFamilies(new Set(items.map((item) => item.family)));
-      }
+      const googleItems = buildGoogleCssWebfontItems(d.googleFontCss);
+      const preferredByFamily = new Map(
+        [...googleItems, ...systemItems].map((item) => [item.family, item])
+      );
+      const hostItems = [...preferredByFamily.values()];
+      systemFontItemsRef.current = hostItems;
+      const items = withMissingFamilyFallbacks(
+        hostItems,
+        instance.doc.state.fontfaces.map((face) => face.family)
+      );
+      localFontItemsRef.current = items;
+      setLocalFontFamilies(new Set(items.map((item) => item.family)));
       setSystemFontCatalogReceived(true);
     };
     window.addEventListener("message", onMessage);
     window.parent.postMessage(
-      { type: BIBLE_HELPER_LIST_SYSTEM_FONTS_REQUEST },
+      {
+        type: BIBLE_HELPER_LIST_SYSTEM_FONTS_REQUEST,
+        requestId,
+        families: requiredFontFamiliesKey
+          ? requiredFontFamiliesKey.split("\u0000")
+          : [],
+      },
       parentOrigin
     );
     return () => window.removeEventListener("message", onMessage);
-  }, [profile, parentOrigin, instance]);
+  }, [profile, parentOrigin, instance, requiredFontFamiliesKey]);
 
   // The font catalog may arrive before the native document. Rebuild aliases
   // whenever that document declares a new family, without another host round
@@ -1070,25 +1091,40 @@ export default function CanvasPlayground({
     setLocalFontFamilies(new Set(items.map((item) => item.family)));
   }, [profile, requiredFontFamiliesKey]);
 
-  // Merge the local font items into the webfont registry. Re-runs whenever the
-  // registry changes — so after the async Google-fonts warmup REPLACES the list
-  // (dropping our locals), this re-injects them. Converges: once every local
-  // family is present it stops dispatching, so there's no loop.
+  // Merge the host-resolved items into the registry, replacing generic Google
+  // records for the same family. Re-runs after async warmup replaces the list.
   useEffect(() => {
     if (profile !== "bible-helper") return;
     const locals = localFontItemsRef.current;
     if (locals.length === 0) return;
-    const present = new Set(fonts.map((f) => f.family));
-    const missing = locals.filter((l) => !present.has(l.family));
-    if (missing.length === 0) return;
+    const preferred = new Map(locals.map((item) => [item.family, item]));
+    const retained = fonts.filter((item) => !preferred.has(item.family));
+    const currentPreferred = fonts.filter((item) => preferred.has(item.family));
+    const alreadyMerged =
+      currentPreferred.length === locals.length &&
+      currentPreferred.every((item) =>
+        locals.some(
+          (local) =>
+            local.family === item.family && local.version === item.version
+        )
+      );
+    if (alreadyMerged) return;
     instance.doc.dispatch({
       type: "__internal/webfonts#webfontList",
       webfontlist: {
         kind: "webfonts#webfontList",
-        items: [...fonts, ...missing],
+        items: [...retained, ...locals],
       },
     });
-  }, [fonts, localFontFamilies, profile, instance]);
+    const requiredFamilies = new Set(
+      requiredFontFamiliesKey ? requiredFontFamiliesKey.split("\u0000") : []
+    );
+    void Promise.all(
+      locals
+        .filter(({ family }) => requiredFamilies.has(family))
+        .map(({ family }) => instance.loadFontSync({ family }))
+    ).catch(() => undefined);
+  }, [fonts, localFontFamilies, profile, instance, requiredFontFamiliesKey]);
 
   // The registry response alone is not enough: wait for the document's exact
   // font families to finish loading into the canvas backend. The font manager

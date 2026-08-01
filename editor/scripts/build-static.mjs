@@ -107,7 +107,6 @@ const FILE_SWAPS = {
   // Build it directly so the packaged editor cannot drift behind the shared
   // origin/session logic in the real source file.
   "app/(canvas)/layout.tsx": `import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -116,8 +115,6 @@ import "../editor.css";
 
 // Static-export stub: skip cookies()-driven platform detection; default to web.
 // Restored by build-static.mjs after build.
-
-const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Grida",
@@ -130,7 +127,7 @@ export default async function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={inter.className}>
+      <body className="font-sans">
         <ThemeProvider>
           <Toaster position="bottom-center" />
           <PlatformProvider application="web" desktop_app_platform={null} desktop_app_version={null}>
@@ -141,6 +138,46 @@ export default async function RootLayout({
     </html>
   );
 }
+`,
+  // The embedded editor has no Grida billing or Supabase server. Keep the
+  // client toolbar's action contract without pulling server-only modules into
+  // the static browser graph.
+  "lib/ai/actions/image.ts": `type EmbeddedImageActionResult =
+  | { success: false; code: "internal"; message: string; status: 503 }
+  | { success: true; data: { image: { kind: "url"; url: string } } };
+
+const unavailable = (): EmbeddedImageActionResult => ({
+  success: false,
+  code: "internal",
+  message: "AI image tools are unavailable in the embedded editor.",
+  status: 503,
+});
+
+export async function upscaleImage(_input: unknown): Promise<EmbeddedImageActionResult> {
+  return unavailable();
+}
+
+export async function removeBackgroundImage(_input: unknown): Promise<EmbeddedImageActionResult> {
+  return unavailable();
+}
+`,
+  "lib/supabase/server.ts": `const unavailable: any = new Proxy(
+  () => {
+    throw new Error("Supabase server access is unavailable in the embedded editor.");
+  },
+  { get: () => unavailable }
+);
+
+export async function createClient(): Promise<any> { return unavailable; }
+export async function createCIAMClient(): Promise<any> { return unavailable; }
+export async function createLibraryClient(): Promise<any> { return unavailable; }
+export async function createFormsClient(): Promise<any> { return unavailable; }
+export async function createStorageClient(): Promise<any> { return unavailable; }
+export async function createCanvasClient(): Promise<any> { return unavailable; }
+export async function createWestReferralClient(): Promise<any> { return unavailable; }
+export async function createWWWClient(): Promise<any> { return unavailable; }
+export async function createXSBClient(): Promise<any> { return unavailable; }
+export const service_role: any = unavailable;
 `,
 };
 
@@ -463,7 +500,10 @@ function vendorWasm() {
 try {
   park();
   vendorWasm();
-  const r = spawnSync("pnpm", ["exec", "next", "build"], {
+  // Use webpack explicitly for the distributable static export. Next 16's
+  // default Turbopack build can deadlock while compiling this parked-route
+  // graph, leaving every worker asleep and no artifact to authenticate.
+  const r = spawnSync("pnpm", ["exec", "next", "build", "--webpack"], {
     stdio: "inherit",
     env: {
       ...process.env,
