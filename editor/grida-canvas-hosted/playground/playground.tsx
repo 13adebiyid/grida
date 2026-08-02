@@ -187,6 +187,7 @@ import {
   buildRhemaSaveDocumentPayload,
   serializeRhemaEditorSnapshot,
 } from "./rhema-save-document";
+import { RhemaDraftAutosaveCoordinator } from "./rhema-draft-autosave";
 import {
   fetchVerifiedExternalAsset,
   requestExternalAssetLocations,
@@ -253,6 +254,7 @@ const BIBLE_HELPER_EDITOR_DIRTY_MESSAGE_TYPE = "bible-helper-editor-dirty";
 // crash-restore draft (discarded edits aren't offered to restore on reopen).
 const BIBLE_HELPER_DISCARD_DRAFT_MESSAGE_TYPE =
   "bible-helper-editor-discard-draft";
+const BIBLE_HELPER_DRAFT_RESTORE_TOAST_ID = "bible-helper-draft-restore";
 // Editor → host: this room has NO OPFS document yet (a builtin/default theme
 // authored in BH code, or a freshly-cloned private theme) — request the stored
 // theme JSON so the editor can materialize a document instead of opening a
@@ -271,6 +273,12 @@ const BIBLE_HELPER_LYRIC_CONTENT_REQUEST_MESSAGE_TYPE =
   "bible-helper-lyric-content-request";
 const BIBLE_HELPER_LYRIC_CONTENT_RESULT_MESSAGE_TYPE =
   "bible-helper-lyric-content-result";
+
+function captureRhemaDraftBytes(instance: Editor): Uint8Array {
+  return new TextEncoder().encode(
+    serializeRhemaEditorSnapshot(instance.getSnapshot().document)
+  );
+}
 
 /**
  * Ask the Bible Helper host for the stored theme payload for a room whose
@@ -717,6 +725,21 @@ export default function CanvasPlayground({
     () => new Set()
   );
   const opfs = usePlaygroundOPFS(resolvedFilekey);
+  const draftAutosave = useMemo(() => {
+    if (profile !== "bible-helper" || !opfs) return null;
+    return new RhemaDraftAutosaveCoordinator<Uint8Array>({
+      delayMs: 1200,
+      writeDraft: async (bytes) => {
+        await opfs.get("document.draft.grida1").write(bytes);
+      },
+      clearDraft: async () => {
+        await opfs.get("document.draft.grida1").write(new Uint8Array(0));
+      },
+      onCleared: () => toast.dismiss(BIBLE_HELPER_DRAFT_RESTORE_TOAST_ID),
+      onError: (error) => console.warn("[bh] draft autosave failed", error),
+    });
+  }, [opfs, profile]);
+  useEffect(() => () => draftAutosave?.dispose(), [draftAutosave]);
   // Guards the crash-restore draft and the dirty flag against PROGRAMMATIC
   // document mutations — the seed hook's backdrop reconstruction AND the
   // rhema boot normalizers (scene background / stage geometry / userdata
@@ -1196,38 +1219,24 @@ export default function CanvasPlayground({
   // document mutations directly — the dirty flag only transitions once, so it
   // can't drive per-edit autosave.
   useEffect(() => {
-    if (profile !== "bible-helper" || !opfs) return;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const writeDraft = () => {
-      try {
-        // The draft is the JSON snapshot ONLY — image BYTES stay in the
-        // WASM heap (restore re-inits from the snapshot; refs resolve via
-        // the room's persisted images). Do NOT call instance.archivedir()
-        // here: it copies every photo's bytes out of WASM per tick.
-        const json = serializeRhemaEditorSnapshot(
-          instance.getSnapshot().document
-        );
-        void opfs
-          .get("document.draft.grida1")
-          .write(new TextEncoder().encode(json));
-      } catch (err) {
-        console.warn("[bh] draft autosave failed", err);
-      }
-    };
+    if (profile !== "bible-helper" || !draftAutosave) return;
     const unsubscribe = instance.doc.subscribeWithSelector(
       (state) => state.document,
       (_store, _next, _prev, action) => {
         if (action?.type === "document/reset") return; // load/init, not an edit
         if (programmaticEditRef.current > 0) return; // seed reconstruction, not an edit
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(writeDraft, 1200);
+        draftAutosave.schedule(() => {
+          // The draft is the JSON snapshot ONLY — image BYTES stay in the
+          // WASM heap (restore re-inits from the snapshot; refs resolve via
+          // the room's persisted images). Do NOT call archivedir() here.
+          return captureRhemaDraftBytes(instance);
+        });
       }
     );
     return () => {
-      if (timer) clearTimeout(timer);
       unsubscribe();
     };
-  }, [profile, opfs, instance]);
+  }, [profile, draftAutosave, instance]);
 
   // Crash-restore: after the saved document loads, if a draft from an
   // interrupted session survived, offer to restore it (once per mount). The
@@ -1284,13 +1293,10 @@ export default function CanvasPlayground({
         return;
       }
       const clearDraft = () => {
-        try {
-          void opfs.get("document.draft.grida1").write(new Uint8Array(0));
-        } catch {
-          /* best effort */
-        }
+        void draftAutosave?.discard();
       };
       toast("Restore unsaved changes?", {
+        id: BIBLE_HELPER_DRAFT_RESTORE_TOAST_ID,
         description: "Your last editor session ended before saving.",
         duration: Infinity,
         action: {
@@ -1315,7 +1321,15 @@ export default function CanvasPlayground({
     return () => {
       cancelled = true;
     };
-  }, [profile, opfs, documentReady, instance, editor, restoreDraftOnBoot]);
+  }, [
+    profile,
+    opfs,
+    documentReady,
+    instance,
+    editor,
+    restoreDraftOnBoot,
+    draftAutosave,
+  ]);
 
   // Host → editor: clear the crash-restore draft when the operator confirmed
   // "discard" on a graceful close, so those edits aren't re-offered next time.
@@ -1325,15 +1339,11 @@ export default function CanvasPlayground({
       if (e.origin !== parentOrigin || e.source !== window.parent) return;
       const d = e.data as { type?: unknown } | null;
       if (!d || d.type !== BIBLE_HELPER_DISCARD_DRAFT_MESSAGE_TYPE) return;
-      try {
-        void opfs.get("document.draft.grida1").write(new Uint8Array(0));
-      } catch {
-        /* best effort */
-      }
+      void draftAutosave?.discard();
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [profile, opfs, parentOrigin]);
+  }, [profile, opfs, parentOrigin, draftAutosave]);
 
   // SONG-slide word refresh (see the lyric-content message consts). The
   // slide's words are HOST data; the canvas's bound text node is a working
@@ -1920,6 +1930,7 @@ export default function CanvasPlayground({
                             backend={backend}
                             canvasRef={handleCanvasRef}
                             onSaved={markSaved}
+                            draftAutosave={draftAutosave}
                             filekey={resolvedFilekey}
                             initialSceneId={initialSceneId}
                             profile={profile}
@@ -1948,6 +1959,7 @@ function Consumer({
   backend,
   canvasRef,
   onSaved,
+  draftAutosave,
   filekey,
   initialSceneId,
   profile,
@@ -1961,6 +1973,7 @@ function Consumer({
   backend: "dom" | "canvas";
   canvasRef?: (canvas: HTMLCanvasElement | null) => void;
   onSaved: () => void;
+  draftAutosave: RhemaDraftAutosaveCoordinator<Uint8Array> | null;
   filekey: string;
   initialSceneId?: string;
   profile: "default" | "bible-helper";
@@ -2326,7 +2339,9 @@ function Consumer({
     "meta+s, ctrl+s",
     async () => {
       if (opfs) {
+        let saveToken: number | null = null;
         try {
+          saveToken = (await draftAutosave?.beginSave()) ?? null;
           const dir = instance.archivedir();
 
           // Write images into OPFS (images/<hash>.<ext>)
@@ -2341,11 +2356,24 @@ function Consumer({
           await opfs
             .get("document.grida1")
             .write(new TextEncoder().encode(snapshotJson));
-          onSaved();
-          toast.success("Saved", {
-            position: "bottom-left",
-          });
+          const savedCurrentGeneration =
+            saveToken === null ||
+            (await draftAutosave!.completeSave(saveToken));
+          if (savedCurrentGeneration) onSaved();
+          toast.success(
+            savedCurrentGeneration
+              ? "Saved"
+              : "Saved; newer edits remain unsaved",
+            {
+              position: "bottom-left",
+            }
+          );
         } catch (error) {
+          if (saveToken !== null) {
+            draftAutosave?.abortSave(saveToken, () =>
+              captureRhemaDraftBytes(instance)
+            );
+          }
           console.error("Failed to save to OPFS:", error);
           toast.error("Failed to save", {
             position: "bottom-left",
@@ -2383,6 +2411,7 @@ function Consumer({
                         workspace={workspace}
                         runProgrammaticEdit={runProgrammaticEdit}
                         onSaved={onSaved}
+                        draftAutosave={draftAutosave}
                         canonicalNativeDocument={canonicalNativeDocument}
                       />
                     )}
@@ -2920,6 +2949,7 @@ function SidebarLeft({
   workspace = "theme",
   runProgrammaticEdit = (fn) => fn(),
   onSaved,
+  draftAutosave,
   canonicalNativeDocument = false,
 }: {
   toggleVisibility?: () => void;
@@ -2949,6 +2979,7 @@ function SidebarLeft({
    *  still asked "Exit without saving?" after a saved bundle AND offered a
    *  stale crash-restore at next boot (2026-07-07 report, item 6). */
   onSaved?: () => void;
+  draftAutosave?: RhemaDraftAutosaveCoordinator<Uint8Array> | null;
   /** Canonical imports save one document snapshot; compat backdrop SVGs are
    *  retained by the host instead of regenerated scene-by-scene. */
   canonicalNativeDocument?: boolean;
@@ -3116,6 +3147,20 @@ function SidebarLeft({
 
   const saveThemeToBibleHelper = useCallback(async () => {
     if (!isBibleHelper || !activeSceneId) return;
+    if (!parentOrigin) {
+      toast.error(
+        "Bible Helper origin missing — reopen the editor from Bible Helper to save themes."
+      );
+      return;
+    }
+    let draftSaveToken: number | null = null;
+    try {
+      draftSaveToken = (await draftAutosave?.beginSave()) ?? null;
+    } catch (error) {
+      console.error("[themes-temp:diag] draft save barrier failed", error);
+      toast.error("The editor could not start a safe save. Please retry.");
+      return;
+    }
     // Persist the editor document to OPFS first so reopening the theme
     // restores the design (without this, Save Theme only broadcasts the
     // runtime payload; the editor's own document state is never written
@@ -3132,10 +3177,6 @@ function SidebarLeft({
         await opfs
           .get("document.grida1")
           .write(new TextEncoder().encode(snapshotJson));
-        // Item 6a: the just-saved state is canonical, so the crash-restore
-        // draft is stale — clear it (empty write; the restore check gates on
-        // length > 0) so reopening doesn't offer to restore already-saved work.
-        await opfs.get("document.draft.grida1").write(new Uint8Array(0));
       } catch (err) {
         console.error("[themes-temp:diag] OPFS persist failed", err);
         toast.warning(
@@ -3191,12 +3232,6 @@ function SidebarLeft({
       );
       payload.backdropSvg = null;
     }
-    if (!parentOrigin) {
-      toast.error(
-        "Bible Helper origin missing — reopen the editor from Bible Helper to save themes."
-      );
-      return;
-    }
     // Route to the slide save channel when this editor session is in
     // the slide workspace. BH stores private slide themes via a
     // distinct upsert path (close-on-save, keyed by privateOwnerSlideId);
@@ -3215,24 +3250,45 @@ function SidebarLeft({
       // runtime can't supply image bytes; a save must NEVER fail because
       // archiving failed, so this degrades to a pure v1 payload.
       const documentPayload = buildSaveDocumentPayload(editor);
-      window.parent.postMessage(
-        {
-          type: messageType,
-          payload: documentPayload
-            ? { ...payload, document: documentPayload }
-            : payload,
-        },
-        parentOrigin,
-        documentPayload ? [documentPayload.archiveBytes] : []
-      );
+      try {
+        window.parent.postMessage(
+          {
+            type: messageType,
+            payload: documentPayload
+              ? { ...payload, document: documentPayload }
+              : payload,
+          },
+          parentOrigin,
+          documentPayload ? [documentPayload.archiveBytes] : []
+        );
+      } catch (error) {
+        if (draftSaveToken !== null) {
+          draftAutosave?.abortSave(draftSaveToken, () =>
+            captureRhemaDraftBytes(editor)
+          );
+        }
+        console.error("[themes-temp:diag] host save post failed", error);
+        toast.error("The slide could not be sent to Bible Helper.");
+        return;
+      }
       // The session is clean now: reset the dirty flag so the host's
       // exit-without-saving confirm and boot-time restore breadcrumb both
       // stand down (they key off the bible-helper-editor-dirty broadcast).
-      onSaved?.();
+      const savedCurrentGeneration =
+        draftSaveToken === null ||
+        (await draftAutosave!.completeSave(draftSaveToken));
+      if (savedCurrentGeneration) onSaved?.();
       toast.success(
-        `Saved ${savedLabel} "${payload.scene.name}" to Bible Helper.`
+        savedCurrentGeneration
+          ? `Saved ${savedLabel} "${payload.scene.name}" to Bible Helper.`
+          : `Saved ${savedLabel}; newer edits remain unsaved.`
       );
       return;
+    }
+    if (draftSaveToken !== null) {
+      draftAutosave?.abortSave(draftSaveToken, () =>
+        captureRhemaDraftBytes(editor)
+      );
     }
     toast.error("Bible Helper parent window was not detected.");
   }, [
@@ -3244,6 +3300,7 @@ function SidebarLeft({
     opfs,
     workspace,
     onSaved,
+    draftAutosave,
   ]);
 
   /**
@@ -3264,6 +3321,17 @@ function SidebarLeft({
       );
       return;
     }
+    let draftSaveToken: number | null = null;
+    try {
+      draftSaveToken = (await draftAutosave?.beginSave()) ?? null;
+    } catch (error) {
+      console.error(
+        "[themes-temp:diag] bundle draft save barrier failed",
+        error
+      );
+      toast.error("The editor could not start a safe save. Please retry.");
+      return;
+    }
 
     if (opfs) {
       try {
@@ -3277,11 +3345,6 @@ function SidebarLeft({
         await opfs
           .get("document.grida1")
           .write(new TextEncoder().encode(snapshotJson));
-        // Item 6a: the just-saved state is canonical, so the crash-restore
-        // draft is stale — clear it (mirrors the single-theme save; without
-        // this every bundle save leaves a pre-save draft that the next open
-        // offers to "restore").
-        await opfs.get("document.draft.grida1").write(new Uint8Array(0));
       } catch (err) {
         console.error("[themes-temp:diag] OPFS persist failed (bundle)", err);
         toast.warning(
@@ -3404,24 +3467,45 @@ function SidebarLeft({
       // the multi-scene editor document IS the bundle's source of truth.
       // Degrades to a pure v1 payload when archiving fails.
       const documentPayload = buildSaveDocumentPayload(editor);
-      window.parent.postMessage(
-        {
-          type: messageType,
-          payload: documentPayload
-            ? { ...envelope, document: documentPayload }
-            : envelope,
-        },
-        parentOrigin,
-        documentPayload ? [documentPayload.archiveBytes] : []
-      );
+      try {
+        window.parent.postMessage(
+          {
+            type: messageType,
+            payload: documentPayload
+              ? { ...envelope, document: documentPayload }
+              : envelope,
+          },
+          parentOrigin,
+          documentPayload ? [documentPayload.archiveBytes] : []
+        );
+      } catch (error) {
+        if (draftSaveToken !== null) {
+          draftAutosave?.abortSave(draftSaveToken, () =>
+            captureRhemaDraftBytes(editor)
+          );
+        }
+        console.error("[themes-temp:diag] bundle host save post failed", error);
+        toast.error("The slide deck could not be sent to Bible Helper.");
+        return;
+      }
       // Clean now — reset the dirty flag exactly like the single-theme save
       // (this bundle path was the one the 2026-07-07 report hit: "saved the
       // bundle" then still asked Exit without saving).
-      onSaved?.();
+      const savedCurrentGeneration =
+        draftSaveToken === null ||
+        (await draftAutosave!.completeSave(draftSaveToken));
+      if (savedCurrentGeneration) onSaved?.();
       toast.success(
-        `Saved ${bundleKind} "${envelope.bundleName}" (${layouts.length} layout${layouts.length === 1 ? "" : "s"}) to Bible Helper.`
+        savedCurrentGeneration
+          ? `Saved ${bundleKind} "${envelope.bundleName}" (${layouts.length} layout${layouts.length === 1 ? "" : "s"}) to Bible Helper.`
+          : `Saved ${bundleKind}; newer edits remain unsaved.`
       );
       return;
+    }
+    if (draftSaveToken !== null) {
+      draftAutosave?.abortSave(draftSaveToken, () =>
+        captureRhemaDraftBytes(editor)
+      );
     }
     toast.error("Bible Helper parent window was not detected.");
   }, [
@@ -3435,6 +3519,7 @@ function SidebarLeft({
     parentOrigin,
     onSaved,
     canonicalNativeDocument,
+    draftAutosave,
   ]);
 
   /** Set the workspace ("theme" or "stage") on the active scene. */
